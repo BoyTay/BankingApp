@@ -116,6 +116,7 @@ class DesktopApiIT {
         assertEquals(57_000, user.get("/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category")
                 .get(25, TimeUnit.SECONDS).path("totalAmountDong").longValue());
 
+        Path savedDirectory = Files.createDirectories(Path.of("target", "demo", "files"));
         UiFixture fixture = onFx(() -> {
             try {
                 FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/workspace.fxml"));
@@ -125,13 +126,24 @@ class DesktopApiIT {
                 Scene scene = new Scene(root, 1180, 780);
                 scene.getStylesheets().add(getClass().getResource("/css/wallet.css").toExternalForm());
                 stage.setScene(scene);
-                loader.<WorkspaceController>getController().init(null, user, "Tài khoản mẫu", "USER");
+                WorkspaceController controller = loader.getController();
+                controller.useFileDialogs(new WorkspaceController.FileDialogs() {
+                    public java.io.File save(javafx.stage.FileChooser chooser, Window owner) {
+                        return savedDirectory.resolve(chooser.getInitialFileName()).toFile();
+                    }
+                    public java.io.File open(javafx.stage.FileChooser chooser, Window owner) {
+                        return Path.of("..", "samples", "expenses-b.csv").toAbsolutePath().toFile();
+                    }
+                });
+                controller.init(null, user, "Tài khoản mẫu", "USER");
                 stage.show();
                 return new UiFixture(stage, scene, root);
             } catch (Exception ex) { throw new RuntimeException(ex); }
         });
         await(() -> !onFx(() -> ((Label) fixture.scene.lookup("#balanceLabel")).getText()).equals("—"));
         assertTrue(onFx(() -> ((Label) fixture.scene.lookup("#balanceLabel")).getText()).contains("487.500"));
+        await(() -> onFx(() -> ((ListView<?>) fixture.scene.lookup("#recentList")).getItems().size()) == 1);
+        assertFalse(onFx(() -> fixture.scene.lookup("#recentEmptyLabel").isVisible()));
         capture(fixture.scene, "dashboard.png");
         onFx(() -> { button(fixture.root, "Chuyển tiền").fire(); return null; });
         assertTrue(onFx(() -> fixture.scene.lookup("#transferPage").isVisible()));
@@ -169,8 +181,31 @@ class DesktopApiIT {
         await(() -> onFx(() -> ((ListView<?>) fixture.scene.lookup("#statsList")).getItems().toString()).contains("2026-01"));
         onFx(() -> { button(fixture.root, "Sao kê chuyển tiền").fire(); return null; });
         assertTrue(onFx(() -> fixture.scene.lookup("#statementsPage").isVisible()));
+        onFx(() -> { button(fixture.root, "Tải CSV").fire(); return null; });
+        await(() -> onFx(() -> ((Label) fixture.scene.lookup("#statementStatus")).getText()).startsWith("Đã lưu sao kê:"));
+        Path savedCsv = savedDirectory.resolve("statement-" + LocalDate.now().withDayOfYear(1).toString().replace("-", "")
+                + "-" + LocalDate.now().toString().replace("-", "") + ".csv");
+        assertTrue(Files.readString(savedCsv).contains(receipt.path("transferId").asString()));
+        onFx(() -> { button(fixture.root, "Tải PDF").fire(); return null; });
+        await(() -> onFx(() -> ((Label) fixture.scene.lookup("#statementStatus")).getText()).endsWith(".pdf"));
+        Path savedPdf = savedDirectory.resolve(savedCsv.getFileName().toString().replace(".csv", ".pdf"));
+        assertEquals("%PDF-", new String(Files.readAllBytes(savedPdf), 0, 5, StandardCharsets.US_ASCII));
+        capture(fixture.scene, "statements.png");
         onFx(() -> { button(fixture.root, "Nhập chi tiêu CSV").fire(); return null; });
         assertTrue(onFx(() -> fixture.scene.lookup("#importsPage").isVisible()));
+        onFx(() -> {
+            ((javafx.scene.control.ComboBox<String>) fixture.scene.lookup("#importFormat")).setValue("SAMPLE_B");
+            button(fixture.root, "Chọn tệp CSV").fire();
+            return null;
+        });
+        assertEquals("expenses-b.csv", onFx(() -> ((Label) fixture.scene.lookup("#selectedFileLabel")).getText()));
+        onFx(() -> { button(fixture.root, "Nhập dữ liệu").fire(); return null; });
+        await(() -> onFx(() -> ((Label) fixture.scene.lookup("#importStatus")).getText()).startsWith("Đã nhập 2 dòng"));
+        capture(fixture.scene, "import.png");
+        assertEquals(486_500, user.get("/me/wallet").get(25, TimeUnit.SECONDS).path("balanceDong").longValue());
+        onFx(() -> { button(fixture.root, "Thống kê chi tiêu").fire(); button(fixture.root, "Theo danh mục").fire(); return null; });
+        await(() -> onFx(() -> ((Label) fixture.scene.lookup("#statsTotal")).getText()).contains("100.000"));
+        capture(fixture.scene, "statistics-imported.png");
         assertFalse(onFx(() -> fixture.scene.lookup("#adminNav").isVisible()));
         onFx(() -> { fixture.stage.close(); return null; });
 
@@ -189,6 +224,16 @@ class DesktopApiIT {
         });
         assertTrue(onFx(() -> adminFixture.scene.lookup("#adminNav").isVisible()));
         onFx(() -> { button(adminFixture.root, "Cấp số dư thử nghiệm").fire(); return null; });
+        onFx(() -> {
+            ((TextField) adminFixture.scene.lookup("#grantWallet")).setText(walletCode);
+            ((TextField) adminFixture.scene.lookup("#grantAmount")).setText("7000");
+            ((javafx.scene.control.TextArea) adminFixture.scene.lookup("#grantReason")).setText("Kiểm tra thao tác giao diện");
+            acceptNextConfirmation();
+            button(adminFixture.root, "Xác nhận cấp tiền").fire();
+            return null;
+        });
+        await(() -> onFx(() -> ((Label) adminFixture.scene.lookup("#grantStatus")).getText()).startsWith("Đã cấp 7.000"));
+        assertEquals(493_500, user.get("/me/wallet").get(25, TimeUnit.SECONDS).path("balanceDong").longValue());
         capture(adminFixture.scene, "admin.png");
         onFx(() -> { adminFixture.stage.close(); return null; });
         user.post("/auth/logout", null).get(25, TimeUnit.SECONDS);
@@ -289,6 +334,9 @@ class DesktopApiIT {
                 } catch (Exception ex) { throw new RuntimeException(ex); }
             });
             UiFixture current = fixture;
+            await(() -> onFx(() -> current.scene.lookup("#recentEmptyLabel").isVisible()));
+            assertEquals(0, onFx(() -> ((ListView<?>) current.scene.lookup("#recentList")).getItems().size()));
+            assertFalse(onFx(() -> current.scene.lookup("#recentList").isVisible()));
             onFx(() -> {
                 button(current.root, "Chuyển tiền").fire();
                 ((TextField) current.scene.lookup("#recipientCode")).setText("WLT_TARGET");

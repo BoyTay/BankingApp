@@ -48,6 +48,7 @@
                     </VBox>
                     <HBox spacing="12"><children><Button text="Làm mới" onAction="#loadDashboard" styleClass="secondary-button"/><Button text="Chuyển tiền ngay" onAction="#showTransfer" styleClass="primary-button"/></children></HBox>
                     <Label text="Giao dịch gần đây" styleClass="section-title"/>
+                    <Label fx:id="recentEmptyLabel" text="Chưa có giao dịch nào." visible="false" managed="false" maxWidth="Infinity" styleClass="empty-state"/>
                     <ListView fx:id="recentList" prefHeight="250" styleClass="data-list"/>
                   </children>
                 </VBox>

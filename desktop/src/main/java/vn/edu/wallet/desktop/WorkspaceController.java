@@ -2,6 +2,7 @@ package vn.edu.wallet.desktop;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.File;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -23,6 +24,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.stage.FileChooser;
+import javafx.stage.Window;
 import tools.jackson.databind.JsonNode;
 
 public final class WorkspaceController {
@@ -30,7 +32,7 @@ public final class WorkspaceController {
             .withZone(ZoneId.systemDefault());
     @FXML private ScrollPane dashboardScroll, transferScroll, historyScroll, statementsScroll, importsScroll, statsScroll, adminScroll;
     @FXML private Button adminNav;
-    @FXML private Label userLabel, connectionLabel, globalStatus, balanceLabel, walletCodeLabel;
+    @FXML private Label userLabel, connectionLabel, globalStatus, balanceLabel, walletCodeLabel, recentEmptyLabel;
     @FXML private ListView<String> recentList, historyList, statsList;
     @FXML private TextField recipientCode, transferAmount, grantWallet, grantAmount;
     @FXML private TextArea grantReason;
@@ -51,6 +53,17 @@ public final class WorkspaceController {
     private Path importFile;
     private UUID importKey;
     private boolean active = true;
+    private FileDialogs fileDialogs = new FileDialogs() {
+        public File save(FileChooser chooser, Window owner) { return chooser.showSaveDialog(owner); }
+        public File open(FileChooser chooser, Window owner) { return chooser.showOpenDialog(owner); }
+    };
+
+    interface FileDialogs {
+        File save(FileChooser chooser, Window owner);
+        File open(FileChooser chooser, Window owner);
+    }
+
+    void useFileDialogs(FileDialogs dialogs) { this.fileDialogs = dialogs; }
 
     void init(WalletDesktopApp app, WalletApiClient api, String name, String role) {
         this.app = app;
@@ -100,11 +113,20 @@ public final class WorkspaceController {
                 })),
                 api.get("/transfers?page=0&size=5").thenAccept(page -> UiSupport.onUi(() -> {
                     if (!active) return;
-                    recentList.getItems().setAll(lines(page.path("items")));
-                    if (recentList.getItems().isEmpty()) recentList.getItems().add("Chưa có giao dịch nào.");
+                    renderRecent(page.path("items"));
                 }))).whenComplete((ignored, failure) -> UiSupport.onUi(() -> {
                     if (active) UiSupport.status(globalStatus, failure == null ? "Dữ liệu đã cập nhật." : UiSupport.error(failure), failure != null);
                 }));
+    }
+
+    private void renderRecent(JsonNode items) {
+        List<String> transactions = lines(items);
+        recentList.getItems().setAll(transactions);
+        boolean empty = transactions.isEmpty();
+        recentList.setVisible(!empty);
+        recentList.setManaged(!empty);
+        recentEmptyLabel.setVisible(empty);
+        recentEmptyLabel.setManaged(empty);
     }
 
     @FXML private void lookupRecipient() {
@@ -248,7 +270,10 @@ public final class WorkspaceController {
         chooser.setInitialFileName("statement-" + statementFrom.getValue().toString().replace("-", "")
                 + "-" + statementTo.getValue().toString().replace("-", "") + "." + format);
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(format.toUpperCase(), "*." + format));
-        var file = chooser.showSaveDialog(csvButton.getScene().getWindow());
+        String saveFolder = System.getProperty("wallet.statement.dir");
+        if (saveFolder != null && Files.isDirectory(Path.of(saveFolder)))
+            chooser.setInitialDirectory(Path.of(saveFolder).toAbsolutePath().toFile());
+        var file = fileDialogs.save(chooser, csvButton.getScene().getWindow());
         if (file == null) return;
         csvButton.setDisable(true); pdfButton.setDisable(true);
         UiSupport.status(statementStatus, "Đang tải sao kê…", false);
@@ -267,7 +292,9 @@ public final class WorkspaceController {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Chọn tệp CSV chi tiêu");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV", "*.csv"));
-        var selected = chooser.showOpenDialog(importButton.getScene().getWindow());
+        Path samples = Files.isDirectory(Path.of("samples")) ? Path.of("samples") : Path.of("..", "samples");
+        if (Files.isDirectory(samples)) chooser.setInitialDirectory(samples.toAbsolutePath().normalize().toFile());
+        var selected = fileDialogs.open(chooser, importButton.getScene().getWindow());
         if (selected == null) return;
         importFile = selected.toPath();
         importKey = null;

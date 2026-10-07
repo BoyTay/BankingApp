@@ -49,3 +49,4 @@
 .list-cell { -fx-background-color: #17243a; -fx-text-fill: #dce9f6; -fx-padding: 12 14; -fx-border-color: transparent transparent #2b3d55 transparent; }
 .list-cell:selected { -fx-background-color: #1c655e; -fx-text-fill: #ffffff; }
 .receipt-text { -fx-text-fill: #dce9f6; -fx-font-family: "Consolas"; -fx-line-spacing: 5px; }
+.empty-state { -fx-background-color: #17243a; -fx-background-radius: 10; -fx-border-color: #30425c; -fx-border-radius: 10; -fx-text-fill: #b7c9da; -fx-padding: 24; }
