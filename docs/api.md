@@ -88,6 +88,39 @@ Request: `{"recipientWalletCode":"WLT759D6C81FD0846C18597","amountDong":1000000,
 
 Lỗi: `400 INVALID_REQUEST`, `400 INVALID_AMOUNT`, `403 FORBIDDEN`, `404 WALLET_NOT_FOUND`, `422 BALANCE_OVERFLOW`. Cấp tiền và bút toán audit cùng transaction. Endpoint này không có khóa chống gửi lặp; UI không tự retry sau timeout mà cần kiểm tra audit trước khi gửi lại.
 
-## Sau mốc 2
+## Sao kê, nhập chi tiêu và thống kê — mốc 3
 
-`GET /statements?from=&to=&format=csv|pdf`, `POST /expense-imports?format=SAMPLE_A|SAMPLE_B`, và `GET /expense-stats?groupBy=category|month` thuộc mốc 3. Hợp đồng chi tiết của chúng sẽ được chốt cùng chức năng.
+Mọi endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>` và chỉ truy cập dữ liệu của người gọi, kể cả khi người gọi là ADMIN. Ngày truyền theo `yyyy-MM-dd` UTC; khoảng `from..to` **bao gồm cả hai ngày**, `from <= to` và tối đa 366 ngày. Không có tham số ngày mặc định; thiếu hoặc sai ngày trả `400 INVALID_DATE_RANGE`.
+
+### `GET /statements?from=2026-01-01&to=2026-01-31&format=csv|pdf`
+
+Response `200` là **tệp nhị phân**, không phải JSON. Chỉ liệt kê các `transfers` của ví người gọi trong khoảng ngày; cấp tiền quản trị và chi tiêu CSV không nằm trong sao kê chuyển tiền. Dòng giao dịch có thời điểm UTC, mã giao dịch, chiều `OUTGOING`/`INCOMING`, mã ví đối ứng, số tiền VND nguyên đồng và **số dư sau của chính ví người gọi**. Kể cả PDF/CSV cũng không chứa số dư của ví đối ứng. Tối đa 10.000 giao dịch trong một lần xuất; vượt mức trả `422 STATEMENT_TOO_LARGE`.
+
+- `format=csv`: `Content-Type: text/csv; charset=UTF-8`; `Content-Disposition: attachment; filename="statement-20260101-20260131.csv"`. Nội dung UTF-8 có BOM để Excel Windows nhận tiếng Việt; header là `Thời gian UTC,Mã giao dịch,Loại,Ví đối ứng,Số tiền (VND),Số dư sau (VND)`.
+- `format=pdf`: `Content-Type: application/pdf`; `Content-Disposition: attachment; filename="statement-20260101-20260131.pdf"`. PDF nhúng font Unicode và có tiêu đề, mã ví, khoảng ngày, các dòng giao dịch cùng tổng tiền vào/ra.
+
+Lỗi: `400 INVALID_DATE_RANGE`, `400 INVALID_FORMAT`, `422 STATEMENT_TOO_LARGE`, `401 UNAUTHORIZED`.
+
+### `POST /expense-imports?format=SAMPLE_A|SAMPLE_B`
+
+`Content-Type: multipart/form-data`; hai phần bắt buộc: `requestKey` là UUID và `file` là tệp CSV UTF-8. `requestKey` đại diện một lần nhập; retry cùng khóa + cùng nội dung trả batch cũ, cùng khóa + nội dung khác trả `409 IMPORT_KEY_CONFLICT`. Cùng tệp và cùng format được nhập lại bằng khóa khác cũng trả batch cũ, tránh đếm chi tiêu hai lần. Phạm vi chống trùng là **từng người dùng**.
+
+Tối đa 1 MiB và 5.000 dòng dữ liệu; tệp rỗng, header sai, UTF-8 lỗi hoặc một dòng sai đều từ chối **cả batch**, không lưu dòng nào. Ngày chi tiêu phải thuộc `2000-01-01..2100-12-31`; số tiền là VND dương `1..1000000000000`, không làm tròn. Format `SAMPLE_A` dùng header `date,description,category,amount_vnd`, ngày `yyyy-MM-dd`, tiền số nguyên hoặc phần thập phân đúng `.00`. Format `SAMPLE_B` dùng dấu `;`, header `Ngày GD;Nội dung;Nhóm;Số tiền`, ngày `dd/MM/yyyy`, tiền số nguyên có thể phân nhóm bằng dấu chấm và có thể kết thúc `,00`. Nội dung/mô tả 1–500 ký tự, danh mục 1–100 ký tự.
+
+Response `201` khi mới nhập, `200` khi trả batch cũ; body giống nhau:
+
+```json
+{"batchId":"f97e6bdd-cb90-4532-aa47-b05799ee40c2","format":"SAMPLE_A","sourceName":"expenses-a.csv","rowCount":2,"importedAt":"2026-10-07T06:00:00Z"}
+```
+
+Lỗi: `400 INVALID_REQUEST` (thiếu file/khóa), `400 INVALID_FORMAT`, `400 INVALID_CSV` (message có số dòng), `400 INVALID_AMOUNT`, `413 FILE_TOO_LARGE`, `409 IMPORT_KEY_CONFLICT`, `401 UNAUTHORIZED`. Nhập CSV **không cập nhật** `wallets` hoặc `ledger_entries`.
+
+### `GET /expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category|month`
+
+Chỉ tổng hợp `imported_expenses` của các batch thuộc người gọi. `groupBy=category` dùng tên danh mục; `groupBy=month` dùng `yyyy-MM`. Tổng tiền là cộng chính xác số nguyên VND. `items` sắp theo `key` tăng dần. Response `200`:
+
+```json
+{"groupBy":"category","from":"2026-01-01","to":"2026-12-31","totalAmountDong":57000,"totalCount":2,"items":[{"key":"An uong","amountDong":45000,"count":1},{"key":"Di lai","amountDong":12000,"count":1}]}
+```
+
+Ví dụ trên minh họa cấu trúc; response thực sắp xếp `key` theo thứ tự Unicode tăng dần. Tối đa 100.000 khoản chi trong một truy vấn. Lỗi: `400 INVALID_DATE_RANGE`, `400 INVALID_GROUP_BY`, `422 AGGREGATE_OVERFLOW`, `422 STATS_TOO_LARGE`, `401 UNAUTHORIZED`.

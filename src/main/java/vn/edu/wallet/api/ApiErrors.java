@@ -9,6 +9,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +26,18 @@ public class ApiErrors {
             MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ApiDtos.ErrorView> invalid(Exception ex) {
         return ResponseEntity.badRequest().body(new ApiDtos.ErrorView("INVALID_REQUEST", "Dữ liệu yêu cầu không hợp lệ", UUID.randomUUID()));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiDtos.ErrorView> tooLarge(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
+                .body(new ApiDtos.ErrorView("FILE_TOO_LARGE", "Tệp CSV vượt quá 1 MiB", UUID.randomUUID()));
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiDtos.ErrorView> multipart(MultipartException ex) {
+        return ResponseEntity.badRequest()
+                .body(new ApiDtos.ErrorView("INVALID_REQUEST", "Multipart không hợp lệ", UUID.randomUUID()));
     }
 
     @ExceptionHandler(Exception.class)
