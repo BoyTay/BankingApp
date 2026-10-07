@@ -153,7 +153,7 @@
                         <Label text="Mã ví nhận" styleClass="field-label"/><TextField fx:id="grantWallet" promptText="WLT..."/>
                         <Label text="Số tiền VND" styleClass="field-label"/><TextField fx:id="grantAmount" promptText="Ví dụ: 1000000"/>
                         <Label text="Lý do" styleClass="field-label"/><TextArea fx:id="grantReason" promptText="Lý do cấp số dư" prefRowCount="3"/>
-                        <Button fx:id="grantButton" text="Xác nhận cấp tiền" onAction="#grantBalance" styleClass="primary-button"/>
+                        <HBox spacing="10"><children><Button fx:id="grantButton" text="Xác nhận cấp tiền" onAction="#grantBalance" styleClass="primary-button"/><Button fx:id="retryGrantButton" text="Thử lại yêu cầu cấp tiền cũ" onAction="#retryGrant" visible="false" managed="false" styleClass="secondary-button"/></children></HBox>
                         <Label fx:id="grantStatus" wrapText="true" styleClass="status-text"/>
                       </children>
                     </VBox>

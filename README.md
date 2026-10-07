@@ -18,7 +18,7 @@ mvn spring-boot:run
 
 Admin demo được tạo một lần nếu cả hai biến bootstrap hợp lệ và email chưa tồn tại; không có mật khẩu mặc định. Password cần ít nhất 10 ký tự. API ở `http://localhost:8080/api/v1`. Không dùng HTTP qua mạng ngoài máy cá nhân; khi triển khai nhiều máy, cấu hình HTTPS ở reverse proxy.
 
-Nếu `mvn` chưa ở `PATH`, dùng Maven đã cài trên máy. Migration nằm tại `src/main/resources/db/migration/V1__init.sql` và `V2__expense_import_dedup.sql`.
+Nếu `mvn` chưa ở `PATH`, dùng Maven đã cài trên máy. Migration nằm tại `src/main/resources/db/migration/` (V1–V3); V3 bổ sung khóa chống gửi lặp cho khoản cấp tiền ADMIN.
 
 ## Chạy desktop trên Windows
 
@@ -29,9 +29,11 @@ $env:WALLET_API_URL = 'http://localhost:8080/api/v1'
 mvn -f desktop/pom.xml javafx:run
 ```
 
+Desktop chỉ chấp nhận `http://` với host đúng `localhost` hoặc `127.0.0.1`. URL server khác phải dùng `https://`; URL chứa thông tin đăng nhập, query hoặc fragment bị từ chối.
+
 Đăng ký tài khoản USER trên giao diện, hoặc đăng nhập bằng tài khoản đã có. Màn hình cấp số dư chỉ xuất hiện với tài khoản ADMIN được bootstrap từ server. Dùng `samples/expenses-a.csv` với `SAMPLE_A` hoặc `samples/expenses-b.csv` với `SAMPLE_B` ở màn hình nhập chi tiêu. Số tiền nhập là số nguyên đồng VND không kèm dấu phân nhóm. Khoảng ngày sao kê/thống kê tối đa 366 ngày theo UTC.
 
-Khi chuyển tiền, cửa sổ xác nhận tạo một `requestKey`. Nếu hết thời gian chờ hoặc server lỗi, nút **Thử lại yêu cầu cũ** gửi lại chính khóa và nội dung đã xác nhận. Sau biên nhận thành công, desktop tải lại ví và lịch sử từ server. Với cấp tiền ADMIN, desktop không tự gửi lại sau timeout.
+Khi chuyển tiền, cửa sổ xác nhận tạo một `requestKey`. Nếu hết thời gian chờ hoặc server lỗi, nút **Thử lại yêu cầu cũ** gửi lại chính khóa và nội dung đã xác nhận. Sau biên nhận thành công, desktop tải lại ví và lịch sử từ server. Cấp tiền ADMIN cũng tạo `requestKey` khi xác nhận và giữ nguyên mã ví, tiền, lý do khi kết quả chưa chắc chắn. Nút **Thử lại yêu cầu cấp tiền cũ** chỉ xuất hiện trong trường hợp đó; ứng dụng không tự gửi lại.
 
 Ảnh demo được tạo với tài khoản và dữ liệu thử nghiệm trong [docs/demo](docs/demo): [đăng nhập](docs/demo/login.png), [dashboard](docs/demo/dashboard.png), [xác nhận/biên nhận](docs/demo/receipt.png), [lịch sử](docs/demo/history.png), [thống kê](docs/demo/statistics.png), [ADMIN](docs/demo/admin.png).
 
@@ -79,7 +81,9 @@ Build desktop độc lập:
 mvn -f desktop/pom.xml package
 ```
 
-`DesktopApiIT` là smoke test tùy chọn, chạy với API thật trỏ vào **database thử nghiệm riêng**, biến môi trường `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_PASSWORD` cho tài khoản ADMIN thử nghiệm và `-Dit.api.url=...`. Test tạo tài khoản ngẫu nhiên, thực hiện cấp tiền/chuyển tiền/nhập CSV và chụp ảnh vào `desktop/target/demo/`; không chạy với database có dữ liệu thật. Test thứ hai dùng HTTP server giả lập để kiểm tra retry cùng `requestKey`/payload sau lỗi 503. Không đặt mật khẩu hoặc token vào lệnh được chia sẻ, Git hay README.
+`DesktopApiIT` là smoke test tùy chọn, chạy với API thật trỏ vào **database thử nghiệm riêng**, biến môi trường `DEMO_ADMIN_EMAIL`/`DEMO_ADMIN_PASSWORD` cho tài khoản ADMIN thử nghiệm và `-Dit.api.url=...`. Test tạo tài khoản ngẫu nhiên, thực hiện cấp tiền/chuyển tiền/nhập CSV và chụp ảnh vào `desktop/target/demo/`; không chạy với database có dữ liệu thật. Hai test dùng HTTP server giả lập để kiểm tra retry chuyển tiền và cấp tiền cùng `requestKey`/payload sau lỗi 503. Không đặt mật khẩu hoặc token vào lệnh được chia sẻ, Git hay README.
+
+Kết quả kiểm tra ngày 07/10/2026: backend unit 6/6; `WalletApiIT` 16/16 trên PostgreSQL cục bộ (gồm hai request cấp tiền cùng khóa chạy đồng thời); desktop `DesktopApiIT` 4/4 với API thật và HTTP giả lập, `WalletApiClientTest` 2/2. Build JAR backend và desktop thành công. Chưa chạy biến thể Testcontainers/Docker trong lần kiểm tra này.
 
 ## Kế hoạch mốc
 

@@ -19,14 +19,32 @@ import tools.jackson.databind.ObjectMapper;
 /** Network only. Raw session token is held in memory and never logged or persisted. */
 public final class WalletApiClient {
     private final URI base;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
+    private final HttpClient http;
     private final ObjectMapper json = new ObjectMapper();
     private volatile String token;
 
     public WalletApiClient(String baseUrl) {
+        base = checkedBase(baseUrl);
+        http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
+    }
+
+    static URI checkedBase(String baseUrl) {
         String normalized = baseUrl == null ? "" : baseUrl.trim().replaceAll("/+$", "");
-        if (!normalized.matches("https?://.+")) throw new IllegalArgumentException("URL server phải dùng http hoặc https");
-        base = URI.create(normalized);
+        URI candidate;
+        try { candidate = URI.create(normalized); }
+        catch (IllegalArgumentException ex) { throw new IllegalArgumentException("URL server không hợp lệ", ex); }
+        String scheme = candidate.getScheme();
+        String host = candidate.getHost();
+        if (scheme == null || host == null || candidate.getRawUserInfo() != null
+                || candidate.getRawQuery() != null || candidate.getRawFragment() != null
+                || (candidate.getPort() < -1 || candidate.getPort() > 65535)) {
+            throw new IllegalArgumentException("URL server không hợp lệ");
+        }
+        boolean local = host.equalsIgnoreCase("localhost") || host.equals("127.0.0.1");
+        if (!(scheme.equalsIgnoreCase("https") || (scheme.equalsIgnoreCase("http") && local))) {
+            throw new IllegalArgumentException("HTTP chỉ dùng với localhost hoặc 127.0.0.1; server khác phải dùng HTTPS");
+        }
+        return candidate;
     }
 
     public String baseUrl() { return base.toString(); }

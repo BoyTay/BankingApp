@@ -24,6 +24,7 @@ public class AdminController {
         if (!"ADMIN".equals(principal.role())) {
             throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Chỉ quản trị viên được cấp tiền");
         }
-        return ResponseEntity.status(HttpStatus.CREATED).body(grants.grant(principal.userId(), request));
+        GrantService.GrantResult result = grants.grant(principal.userId(), request);
+        return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED).body(result.receipt());
     }
 }

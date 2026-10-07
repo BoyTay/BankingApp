@@ -93,7 +93,7 @@ class DesktopApiIT {
                 "password", adminPassword))).get(25, TimeUnit.SECONDS);
         admin.useToken(adminLogin.path("accessToken").asString());
         assertEquals("ADMIN", adminLogin.path("user").path("role").asString());
-        admin.post("/admin/grants", admin.object(Map.of("recipientWalletCode", walletCode,
+        admin.post("/admin/grants", admin.object(Map.of("requestKey", UUID.randomUUID().toString(), "recipientWalletCode", walletCode,
                 "amountDong", 500_000, "reason", "Cấp tiền cho demo giao diện"))).get(25, TimeUnit.SECONDS);
         String adminWalletCode = admin.get("/me/wallet").get(25, TimeUnit.SECONDS).path("walletCode").asString();
         JsonNode lookup = user.get("/wallets/lookup/" + adminWalletCode).get(25, TimeUnit.SECONDS);
@@ -353,6 +353,75 @@ class DesktopApiIT {
             assertEquals(posts.get(0), posts.get(1));
             assertNotNull(UUID.fromString(new tools.jackson.databind.ObjectMapper().readTree(posts.getFirst())
                     .path("requestKey").asString()));
+        } finally {
+            if (fixture != null) { UiFixture current = fixture; onFx(() -> { current.stage.close(); return null; }); }
+            server.stop(0);
+        }
+    }
+
+    @Test void adminGrantRetryKeepsSameRequestKeyAndPayload() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        List<String> posts = java.util.Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger attempts = new AtomicInteger();
+        server.createContext("/api/v1/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String response;
+            int status = 200;
+            if (path.equals("/api/v1/me/wallet")) response = "{\"walletCode\":\"WLT_ADMIN\",\"balanceDong\":0}";
+            else if (path.equals("/api/v1/transfers")) response = "{\"items\":[],\"totalItems\":0}";
+            else if (path.equals("/api/v1/admin/grants") && exchange.getRequestMethod().equals("POST")) {
+                posts.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                if (attempts.incrementAndGet() == 1) {
+                    status = 503;
+                    response = "{\"code\":\"SERVER_UNAVAILABLE\",\"message\":\"Server tạm bận\"}";
+                } else {
+                    String key = new tools.jackson.databind.ObjectMapper().readTree(posts.getFirst())
+                            .path("requestKey").asString();
+                    response = "{\"grantId\":\"" + UUID.randomUUID() + "\",\"requestKey\":\"" + key
+                            + "\",\"amountDong\":7000,\"balanceAfterDong\":7000}";
+                }
+            } else { status = 404; response = "{}"; }
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(status, bytes.length);
+            try (var out = exchange.getResponseBody()) { out.write(bytes); }
+        });
+        server.start();
+        UiFixture fixture = null;
+        try {
+            WalletApiClient api = new WalletApiClient("http://127.0.0.1:" + server.getAddress().getPort() + "/api/v1");
+            fixture = onFx(() -> {
+                try {
+                    FXMLLoader loader = new FXMLLoader(getClass().getResource("/fxml/workspace.fxml"));
+                    Parent root = loader.load();
+                    Stage stage = new Stage();
+                    Scene scene = new Scene(root, 1180, 780);
+                    scene.getStylesheets().add(getClass().getResource("/css/wallet.css").toExternalForm());
+                    stage.setScene(scene);
+                    loader.<WorkspaceController>getController().init(null, api, "Quản trị mẫu", "ADMIN");
+                    stage.show();
+                    return new UiFixture(stage, scene, root);
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            UiFixture current = fixture;
+            onFx(() -> {
+                button(current.root, "Cấp số dư thử nghiệm").fire();
+                ((TextField) current.scene.lookup("#grantWallet")).setText("WLT12345678901234567890");
+                ((TextField) current.scene.lookup("#grantAmount")).setText("7000");
+                ((javafx.scene.control.TextArea) current.scene.lookup("#grantReason")).setText("Thử lại khi timeout");
+                acceptNextConfirmation();
+                button(current.root, "Xác nhận cấp tiền").fire();
+                return null;
+            });
+            await(() -> onFx(() -> ((Button) current.scene.lookup("#retryGrantButton")).isVisible()));
+            assertTrue(onFx(() -> current.scene.lookup("#grantWallet").isDisabled()));
+            onFx(() -> { button(current.root, "Thử lại yêu cầu cấp tiền cũ").fire(); return null; });
+            await(() -> onFx(() -> ((Label) current.scene.lookup("#grantStatus")).getText()).startsWith("Đã cấp 7.000"));
+            assertEquals(2, posts.size());
+            assertEquals(posts.get(0), posts.get(1));
+            assertNotNull(UUID.fromString(new tools.jackson.databind.ObjectMapper().readTree(posts.getFirst())
+                    .path("requestKey").asString()));
+            assertFalse(onFx(() -> current.scene.lookup("#grantWallet").isDisabled()));
         } finally {
             if (fixture != null) { UiFixture current = fixture; onFx(() -> { current.stage.close(); return null; }); }
             server.stop(0);

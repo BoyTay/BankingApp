@@ -39,7 +39,7 @@ public final class WorkspaceController {
     @FXML private Label recipientResult, transferStatus, receiptText, historyPageLabel, detailText;
     @FXML private Label statementStatus, selectedFileLabel, importStatus, statsTotal, statsStatus, grantStatus;
     @FXML private Button lookupButton, confirmTransferButton, retryTransferButton, newTransferButton;
-    @FXML private Button previousPageButton, nextPageButton, csvButton, pdfButton, importButton, grantButton;
+    @FXML private Button previousPageButton, nextPageButton, csvButton, pdfButton, importButton, grantButton, retryGrantButton;
     @FXML private DatePicker statementFrom, statementTo, statsFrom, statsTo;
     @FXML private ComboBox<String> importFormat;
     private WalletDesktopApp app;
@@ -52,6 +52,7 @@ public final class WorkspaceController {
     private long historyTotal;
     private Path importFile;
     private UUID importKey;
+    private GrantIntent pendingGrant;
     private boolean active = true;
     private FileDialogs fileDialogs = new FileDialogs() {
         public File save(FileChooser chooser, Window owner) { return chooser.showSaveDialog(owner); }
@@ -350,6 +351,10 @@ public final class WorkspaceController {
 
     @FXML private void grantBalance() {
         if (!"ADMIN".equals(role)) return;
+        if (pendingGrant != null) {
+            UiSupport.status(grantStatus, "Khoản cấp trước chưa rõ kết quả. Dùng “Thử lại yêu cầu cấp tiền cũ”.", true);
+            return;
+        }
         Long value = amount(grantAmount.getText());
         if (value == null || grantWallet.getText().isBlank() || grantReason.getText().isBlank()) {
             UiSupport.status(grantStatus, "Nhập mã ví, số tiền nguyên đồng và lý do.", true); return;
@@ -357,25 +362,54 @@ public final class WorkspaceController {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Xác nhận cấp số dư");
         confirm.setHeaderText("Cấp " + UiSupport.money(value) + " cho " + grantWallet.getText().trim());
-        confirm.setContentText("Lý do: " + grantReason.getText().trim() + "\nYêu cầu này không tự gửi lại nếu hết thời gian chờ.");
+        confirm.setContentText("Lý do: " + grantReason.getText().trim() + "\nNếu hết thời gian chờ, thử lại bằng đúng yêu cầu này.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
-        grantButton.setDisable(true);
+        pendingGrant = new GrantIntent(UUID.randomUUID(), grantWallet.getText().trim(), value, grantReason.getText().trim());
+        lockGrant(true);
+        sendPendingGrant();
+    }
+
+    @FXML private void retryGrant() { if (pendingGrant != null) sendPendingGrant(); }
+
+    private void sendPendingGrant() {
+        GrantIntent intent = pendingGrant;
+        if (intent == null) return;
+        retryGrantButton.setDisable(true);
         UiSupport.status(grantStatus, "Đang cấp số dư…", false);
-        api.post("/admin/grants", api.object(Map.of("recipientWalletCode", grantWallet.getText().trim(),
-                "amountDong", value, "reason", grantReason.getText().trim())))
+        api.post("/admin/grants", api.object(Map.of("requestKey", intent.key().toString(),
+                "recipientWalletCode", intent.recipientCode(), "amountDong", intent.amountDong(), "reason", intent.reason())))
                 .whenComplete((result, failure) -> UiSupport.onUi(() -> {
-                    if (!active) return;
-                    grantButton.setDisable(false);
+                    if (!active || pendingGrant != intent) return;
+                    retryGrantButton.setDisable(false);
                     if (failure == null) {
+                        pendingGrant = null;
+                        retryGrantButton.setVisible(false);
+                        retryGrantButton.setManaged(false);
+                        lockGrant(false);
                         UiSupport.status(grantStatus, "Đã cấp " + UiSupport.money(result.path("amountDong").longValue())
                                 + ". Mã thao tác: " + result.path("grantId").asString(), false);
                         grantAmount.clear(); grantReason.clear();
                         loadDashboard();
                     } else if (UiSupport.uncertain(failure)) {
-                        UiSupport.status(grantStatus, "Chưa rõ kết quả cấp tiền. Không gửi lại tự động; kiểm tra audit trước. "
+                        retryGrantButton.setVisible(true);
+                        retryGrantButton.setManaged(true);
+                        UiSupport.status(grantStatus, "Chưa rõ kết quả. “Thử lại yêu cầu cấp tiền cũ” giữ nguyên mã và nội dung. "
                                 + UiSupport.error(failure), true);
-                    } else UiSupport.status(grantStatus, UiSupport.error(failure), true);
+                    } else {
+                        pendingGrant = null;
+                        retryGrantButton.setVisible(false);
+                        retryGrantButton.setManaged(false);
+                        lockGrant(false);
+                        UiSupport.status(grantStatus, UiSupport.error(failure), true);
+                    }
                 }));
+    }
+
+    private void lockGrant(boolean locked) {
+        grantWallet.setDisable(locked);
+        grantAmount.setDisable(locked);
+        grantReason.setDisable(locked);
+        grantButton.setDisable(locked);
     }
 
     @FXML private void logout() {
@@ -435,4 +469,5 @@ public final class WorkspaceController {
     }
 
     private record TransferIntent(UUID key, String recipientCode, long amountDong) {}
+    private record GrantIntent(UUID key, String recipientCode, long amountDong, String reason) {}
 }
