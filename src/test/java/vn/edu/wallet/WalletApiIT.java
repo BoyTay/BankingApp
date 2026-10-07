@@ -6,7 +6,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +31,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.text.PDFTextStripper;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import vn.edu.wallet.service.TransferWriteHook;
@@ -247,6 +252,143 @@ class WalletApiIT {
         assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + id, outsider.token(), null));
         assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + id, admin.token(), null));
         assertEquals(0, body(request("GET", "/transfers", outsider.token(), null)).path("totalItems").longValue());
+    }
+
+    @Test
+    void statementsExportOwnTransactionsInCsvAndPdf() throws Exception {
+        Account a = register("statement-a");
+        Account b = register("statement-b");
+        Account c = register("statement-c");
+        Account admin = admin();
+        grant(admin, a, 1000);
+        grant(admin, b, 500);
+        String ownId = body(transfer(a, b, 275, UUID.randomUUID())).path("transferId").asString();
+        String foreignId = body(transfer(b, c, 100, UUID.randomUUID())).path("transferId").asString();
+        String query = "/statements?from=2026-01-01&to=2026-12-31&format=";
+        HttpResponse<byte[]> csv = download(a, query + "csv");
+        assertEquals(200, csv.statusCode());
+        assertTrue(csv.headers().firstValue("Content-Type").orElse("").startsWith("text/csv"));
+        assertTrue(csv.headers().firstValue("Content-Disposition").orElse("").contains("statement-20260101-20261231.csv"));
+        String csvText = new String(csv.body(), StandardCharsets.UTF_8);
+        assertTrue(csvText.startsWith("\uFEFFThời gian UTC"));
+        assertTrue(csvText.contains(ownId));
+        assertTrue(csvText.contains("Chuyển đi"));
+        assertTrue(csvText.contains(",275,725"));
+        assertFalse(csvText.contains(foreignId));
+        assertFalse(csvText.contains(",600")); // recipient's balance after first transfer
+
+        HttpResponse<byte[]> pdf = download(a, query + "pdf");
+        assertEquals(200, pdf.statusCode());
+        assertEquals("application/pdf", pdf.headers().firstValue("Content-Type").orElse(""));
+        assertTrue(new String(pdf.body(), 0, 5, StandardCharsets.US_ASCII).equals("%PDF-"));
+        Files.createDirectories(Path.of("target", "test-artifacts"));
+        Files.write(Path.of("target", "test-artifacts", "statement-sample.pdf"), pdf.body());
+        try (var document = Loader.loadPDF(pdf.body())) {
+            String text = new PDFTextStripper().getText(document);
+            assertTrue(text.contains("SAO KÊ CHUYỂN TIỀN"), text);
+            assertTrue(text.contains(a.walletCode()), text);
+            assertTrue(text.contains("Tổng chuyển đi: 275 VND"), text);
+            assertFalse(text.contains(foreignId), text);
+        }
+        assertError(400, "INVALID_DATE_RANGE", request("GET",
+                "/statements?from=2026-01-01&to=2027-12-31&format=csv", a.token(), null));
+        assertEquals(401, download(c, query + "csv", false).statusCode());
+    }
+
+    @Test
+    void importBothFormatsAggregatesOnlyOwnerAndNeverChangesWalletOrLedger() throws Exception {
+        Account a = register("expense-a");
+        Account b = register("expense-b");
+        grant(admin(), a, 1000);
+        long balanceBefore = wallet(a).path("balanceDong").longValue();
+        int ledgerBefore = count("ledger_entries");
+        byte[] sampleA = Files.readAllBytes(Path.of("samples/expenses-a.csv"));
+        byte[] sampleB = Files.readAllBytes(Path.of("samples/expenses-b.csv"));
+        UUID key = UUID.randomUUID();
+        HttpResponse<String> first = upload(a, "SAMPLE_A", key, sampleA);
+        assertEquals(201, first.statusCode(), first.body());
+        assertEquals(2, body(first).path("rowCount").intValue());
+        assertEquals(200, upload(a, "SAMPLE_A", key, sampleA).statusCode());
+        assertEquals(200, upload(a, "SAMPLE_A", UUID.randomUUID(), sampleA).statusCode());
+        assertError(409, "IMPORT_KEY_CONFLICT", upload(a, "SAMPLE_B", key, sampleB));
+        assertEquals(201, upload(a, "SAMPLE_B", UUID.randomUUID(), sampleB).statusCode());
+        assertEquals(2, count("import_batches"));
+        assertEquals(4, count("imported_expenses"));
+        assertEquals(balanceBefore, wallet(a).path("balanceDong").longValue());
+        assertEquals(ledgerBefore, count("ledger_entries"));
+
+        JsonNode category = body(request("GET", "/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category", a.token(), null));
+        assertEquals(100000, category.path("totalAmountDong").longValue());
+        assertEquals(4, category.path("totalCount").longValue());
+        assertEquals(4, category.path("items").size());
+        JsonNode month = body(request("GET", "/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=month", a.token(), null));
+        assertEquals("2026-01", month.path("items").get(0).path("key").asString());
+        assertEquals(57000, month.path("items").get(0).path("amountDong").longValue());
+        assertEquals("2026-02", month.path("items").get(1).path("key").asString());
+        assertEquals(43000, month.path("items").get(1).path("amountDong").longValue());
+        JsonNode other = body(request("GET", "/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category", b.token(), null));
+        assertEquals(0, other.path("totalAmountDong").longValue());
+        assertEquals(0, other.path("items").size());
+    }
+
+    @Test
+    void malformedCsvAndAmountsAreRejectedWithoutPartialImport() throws Exception {
+        Account a = register("bad-csv");
+        String header = "date,description,category,amount_vnd\n";
+        assertError(400, "INVALID_CSV", upload(a, "SAMPLE_A", UUID.randomUUID(),
+                "bad,header\n2026-01-01,x,y,1\n".getBytes(StandardCharsets.UTF_8)));
+        assertError(400, "INVALID_CSV", upload(a, "SAMPLE_A", UUID.randomUUID(),
+                (header + "2026-01-01,good,food,1\ninvalid,bad,food,2\n").getBytes(StandardCharsets.UTF_8)));
+        assertError(400, "INVALID_AMOUNT", upload(a, "SAMPLE_A", UUID.randomUUID(),
+                (header + "2026-01-01,bad,food,-1\n").getBytes(StandardCharsets.UTF_8)));
+        assertError(400, "INVALID_AMOUNT", upload(a, "SAMPLE_A", UUID.randomUUID(),
+                (header + "2026-01-01,bad,food,1000000000001\n").getBytes(StandardCharsets.UTF_8)));
+        assertError(400, "INVALID_CSV", upload(a, "SAMPLE_A", UUID.randomUUID(), new byte[] {(byte) 0xC3, 0x28}));
+        assertError(413, "FILE_TOO_LARGE", upload(a, "SAMPLE_A", UUID.randomUUID(), new byte[1_048_577]));
+        assertEquals(0, count("import_batches"));
+        assertEquals(0, count("imported_expenses"));
+        assertEquals(0, count("ledger_entries"));
+        assertEquals(0, wallet(a).path("balanceDong").longValue());
+    }
+
+    @Test
+    void sameImportKeyConcurrentCreatesOneBatch() throws Exception {
+        Account a = register("import-race");
+        byte[] bytes = Files.readAllBytes(Path.of("samples/expenses-b.csv"));
+        UUID key = UUID.randomUUID();
+        List<HttpResponse<String>> responses = parallel(
+                () -> upload(a, "SAMPLE_B", key, bytes),
+                () -> upload(a, "SAMPLE_B", key, bytes));
+        assertEquals(1, responses.stream().filter(r -> r.statusCode() == 201).count());
+        assertEquals(1, responses.stream().filter(r -> r.statusCode() == 200).count());
+        assertEquals(1, count("import_batches"));
+        assertEquals(2, count("imported_expenses"));
+    }
+
+    private HttpResponse<byte[]> download(Account account, String path) throws Exception {
+        return download(account, path, true);
+    }
+
+    private HttpResponse<byte[]> download(Account account, String path, boolean authenticated) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1" + path));
+        if (authenticated) builder.header("Authorization", "Bearer " + account.token());
+        return http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    private HttpResponse<String> upload(Account account, String format, UUID key, byte[] file) throws Exception {
+        String boundary = "test-" + UUID.randomUUID();
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"requestKey\"\r\n\r\n"
+                + key + "\r\n--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"expenses.csv\"\r\n"
+                + "Content-Type: text/csv\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(file);
+        body.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
+                        + "/api/v1/expense-imports?format=" + format))
+                .header("Authorization", "Bearer " + account.token())
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build();
+        return http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     private Account register(String label) throws Exception {

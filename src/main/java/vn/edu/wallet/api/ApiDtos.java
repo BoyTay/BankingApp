@@ -23,5 +23,10 @@ public final class ApiDtos {
     public record GrantCreate(String recipientWalletCode, JsonNode amountDong, String reason) {}
     public record GrantView(UUID grantId, UUID adminUserId, String recipientWalletCode,
                             long amountDong, long balanceAfterDong, String reason, Instant createdAt) {}
+    public record ImportView(UUID batchId, String format, String sourceName, int rowCount, Instant importedAt) {}
+    public record ExpenseSummaryView(String key, long amountDong, long count) {}
+    public record ExpenseStatsView(String groupBy, String from, String to,
+                                   long totalAmountDong, long totalCount,
+                                   List<ExpenseSummaryView> items) {}
     public record ErrorView(String code, String message, UUID traceId) {}
 }

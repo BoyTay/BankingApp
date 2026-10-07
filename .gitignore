@@ -16,10 +16,15 @@ data/postgres/
 !.env.example
 application-local.properties
 application-*.local.properties
+application-*.properties
+application-*.yml
+application-*.yaml
 config/local/
 secrets/
 *.token
 *.key
+*.pem
+*.pfx
 *.p12
 *.jks
 .pgpass
