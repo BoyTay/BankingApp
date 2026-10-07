@@ -235,6 +235,75 @@ class WalletApiIT {
     }
 
     @Test
+    void reconciliationStaysBalancedAfterGrantsTransfersRetriesAndRollback() throws Exception {
+        Account administrator = admin();
+        Account sender = register("reconcile-sender");
+        Account recipient = register("reconcile-recipient");
+        assertError(401, "UNAUTHORIZED", request("GET", "/admin/reconciliation", null, null));
+        assertError(403, "FORBIDDEN", request("GET", "/admin/reconciliation", sender.token(), null));
+
+        UUID grantKey = UUID.randomUUID();
+        assertEquals(201, grantRaw(administrator, sender.walletCode(), "100", "Test funding", grantKey).statusCode());
+        assertEquals(200, grantRaw(administrator, sender.walletCode(), "100", "Test funding", grantKey).statusCode());
+        UUID transferKey = UUID.randomUUID();
+        assertEquals(201, transfer(sender, recipient, 40, transferKey).statusCode());
+        assertEquals(200, transfer(sender, recipient, 40, transferKey).statusCode());
+        JsonNode balanced = body(request("GET", "/admin/reconciliation", administrator.token(), null));
+        assertEquals(3, balanced.path("checkedWallets").longValue());
+        assertEquals(0, balanced.path("mismatchCount").longValue());
+        assertEquals(0, balanced.path("items").size());
+        assertFalse(balanced.path("checkedAt").asString().isBlank());
+
+        FAIL_AFTER_DEBIT.set(true);
+        assertEquals(500, transfer(sender, recipient, 10, UUID.randomUUID()).statusCode());
+        FAIL_AFTER_DEBIT.set(false);
+        JsonNode afterRollback = body(request("GET", "/admin/reconciliation", administrator.token(), null));
+        assertEquals(0, afterRollback.path("mismatchCount").longValue());
+        assertEquals(60, wallet(sender).path("balanceDong").longValue());
+        assertEquals(40, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(1, count("admin_grants"));
+        assertEquals(1, count("transfers"));
+        assertEquals(3, count("ledger_entries"));
+    }
+
+    @Test
+    void reconciliationReportsExactDifferencesWithoutChangingWallets() throws Exception {
+        Account administrator = admin();
+        Account sender = register("reconcile-a");
+        Account recipient = register("reconcile-b");
+        grant(administrator, sender, 100);
+        assertEquals(201, transfer(sender, recipient, 40, UUID.randomUUID()).statusCode());
+        db.update("UPDATE wallets SET balance_dong=65 WHERE wallet_code=?", sender.walletCode());
+        db.update("UPDATE wallets SET balance_dong=37 WHERE wallet_code=?", recipient.walletCode());
+
+        JsonNode firstPage = body(request("GET", "/admin/reconciliation?page=0&size=1", administrator.token(), null));
+        JsonNode secondPage = body(request("GET", "/admin/reconciliation?page=1&size=1", administrator.token(), null));
+        assertEquals(3, firstPage.path("checkedWallets").longValue());
+        assertEquals(2, firstPage.path("mismatchCount").longValue());
+        assertEquals(1, firstPage.path("items").size());
+        assertEquals(1, secondPage.path("items").size());
+        List<JsonNode> mismatches = List.of(firstPage.path("items").get(0), secondPage.path("items").get(0));
+        JsonNode senderMismatch = mismatches.stream()
+                .filter(item -> item.path("walletCode").asString().equals(sender.walletCode())).findFirst().orElseThrow();
+        JsonNode recipientMismatch = mismatches.stream()
+                .filter(item -> item.path("walletCode").asString().equals(recipient.walletCode())).findFirst().orElseThrow();
+        assertEquals("65", senderMismatch.path("actualBalanceDong").asString());
+        assertEquals("60", senderMismatch.path("ledgerBalanceDong").asString());
+        assertEquals("5", senderMismatch.path("differenceDong").asString());
+        assertEquals("37", recipientMismatch.path("actualBalanceDong").asString());
+        assertEquals("40", recipientMismatch.path("ledgerBalanceDong").asString());
+        assertEquals("-3", recipientMismatch.path("differenceDong").asString());
+        assertEquals(65, wallet(sender).path("balanceDong").longValue());
+        assertEquals(37, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation?page=2&size=1",
+                administrator.token(), null)).path("items").size());
+        assertError(400, "INVALID_REQUEST", request("GET",
+                "/admin/reconciliation?page=-1&size=20", administrator.token(), null));
+        assertError(400, "INVALID_REQUEST", request("GET",
+                "/admin/reconciliation?page=0&size=101", administrator.token(), null));
+    }
+
+    @Test
     void userCannotGrantOrReadOtherPeoplesReceipt() throws Exception {
         Account a = register("private-a");
         Account b = register("private-b");

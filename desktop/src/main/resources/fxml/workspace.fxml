@@ -157,6 +157,19 @@
                         <Label fx:id="grantStatus" wrapText="true" styleClass="status-text"/>
                       </children>
                     </VBox>
+                    <VBox spacing="12" styleClass="form-card">
+                      <children>
+                        <Label text="Đối soát số dư" styleClass="section-title"/>
+                        <Label text="So sánh số dư ví với tổng bút toán. Báo cáo chỉ đọc dữ liệu." wrapText="true" styleClass="page-subtitle"/>
+                        <Button fx:id="reconciliationButton" text="Kiểm tra" onAction="#checkReconciliation" styleClass="secondary-button"/>
+                        <Label fx:id="reconciliationStatus" text="Chưa chạy đối soát." wrapText="true" styleClass="status-text"/>
+                        <ListView fx:id="reconciliationList" prefHeight="210" visible="false" managed="false" styleClass="data-list"/>
+                        <HBox spacing="10"><children>
+                          <Button fx:id="previousReconciliationButton" text="Trước" onAction="#previousReconciliation" disable="true" styleClass="secondary-button"/>
+                          <Button fx:id="nextReconciliationButton" text="Sau" onAction="#nextReconciliation" disable="true" styleClass="secondary-button"/>
+                        </children></HBox>
+                      </children>
+                    </VBox>
                   </children>
                 </VBox>
               </content>

@@ -88,6 +88,14 @@
 
       <div class="panel" data-panel="admin" hidden>
         <div class="card form-card"><h2>Cấp tiền vào ví</h2><p class="muted">Chức năng dành cho quản trị viên. Khoản cấp được ghi vào nhật ký hệ thống.</p><form id="grant-form"><label>Mã ví nhận tiền<input name="recipientWalletCode" required placeholder="WLT..."></label><label>Số tiền (VND)<input name="amountDong" type="number" min="1" max="1000000000000" step="1" required></label><label>Lý do<input name="reason" maxlength="500" required></label><button class="primary" type="submit">Xác nhận cấp tiền</button></form><p class="muted small" id="grant-pending" hidden>Chưa rõ kết quả. Gửi lại đúng yêu cầu cũ để tránh cấp tiền hai lần.</p><button type="button" class="secondary" id="retry-grant" hidden>Thử lại yêu cầu cũ</button></div>
+        <section class="card reconciliation-card" aria-labelledby="reconciliation-heading">
+          <div class="section-heading"><div><h2 id="reconciliation-heading">Đối soát số dư</h2><p class="muted">So sánh số dư ví với tổng bút toán. Báo cáo chỉ đọc dữ liệu.</p></div><button type="button" class="secondary" id="check-reconciliation">Kiểm tra</button></div>
+          <p id="reconciliation-status" role="status" aria-live="polite">Chưa chạy đối soát.</p>
+          <div id="reconciliation-results" hidden>
+            <div class="table-wrap"><table><thead><tr><th>Mã ví</th><th class="numeric">Số dư ví (VND)</th><th class="numeric">Theo bút toán (VND)</th><th class="numeric">Chênh lệch (VND)</th></tr></thead><tbody id="reconciliation-body"></tbody></table></div>
+            <div class="pager"><button type="button" class="secondary" id="reconciliation-prev">Trước</button><span id="reconciliation-page"></span><button type="button" class="secondary" id="reconciliation-next">Sau</button></div>
+          </div>
+        </section>
       </div>
     </section>
   </main>

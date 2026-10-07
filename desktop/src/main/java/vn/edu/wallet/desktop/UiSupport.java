@@ -1,6 +1,7 @@
 package vn.edu.wallet.desktop;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.net.ConnectException;
 import java.net.http.HttpTimeoutException;
 import java.text.NumberFormat;
@@ -15,6 +16,7 @@ final class UiSupport {
     private UiSupport() {}
 
     static String money(long amount) { return VND.format(amount) + " ₫"; }
+    static String money(String amount) { return VND.format(new BigInteger(amount)) + " ₫"; }
     static void onUi(Runnable action) { Platform.runLater(action); }
     static Throwable root(Throwable ex) {
         while (ex instanceof CompletionException && ex.getCause() != null) ex = ex.getCause();

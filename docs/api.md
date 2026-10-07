@@ -88,6 +88,16 @@ Request: `{"requestKey":"55e97fbc-d73d-4748-9808-c68bf34c225a","recipientWalletC
 
 Lỗi: `400 INVALID_REQUEST` (thiếu/sai UUID hoặc lý do), `400 INVALID_AMOUNT`, `403 FORBIDDEN`, `404 WALLET_NOT_FOUND`, `409 GRANT_KEY_CONFLICT` (cùng ADMIN và khóa nhưng khác mã ví, tiền hoặc lý do), `422 BALANCE_OVERFLOW`. Cấp tiền và bút toán audit cùng transaction. Hai request đồng thời cùng ADMIN/khóa chỉ tạo một khoản cấp; yêu cầu thất bại không giữ khóa. Khóa chống trùng có phạm vi từng ADMIN. UI không tự gửi lại; nút thử lại yêu cầu cũ chỉ hiện khi kết quả chưa chắc chắn và gửi đúng payload đã xác nhận.
 
+### `GET /admin/reconciliation?page=0&size=20` — ADMIN
+
+Đối chiếu `wallets.balance_dong` với tổng `ledger_entries.delta_dong` của từng ví. Tài khoản mới bắt đầu với 0 VND. Endpoint **chỉ đọc**, không sửa ví hoặc bút toán. `page` bắt đầu từ 0, `size` từ 1 đến 100; chỉ phân trang các ví sai lệch, sắp theo mã ví. Response `200`:
+
+```json
+{"checkedAt":"2026-10-07T10:00:00Z","checkedWallets":3,"mismatchCount":1,"page":0,"size":20,"items":[{"walletId":"759d6c81-fd08-46c1-8597-85ddd790bf7c","walletCode":"WLT759D6C81FD0846C18597","actualBalanceDong":"100005","ledgerBalanceDong":"100000","differenceDong":"5"}]}
+```
+
+Ba giá trị tiền là chuỗi số nguyên chính xác; `differenceDong = actualBalanceDong - ledgerBalanceDong`. Khi không có sai lệch, `mismatchCount=0` và `items=[]`. Kết quả là ảnh chụp nhất quán tại thời điểm `checkedAt`; lần gọi sau có thể thay đổi nếu phát sinh giao dịch. Phép kiểm tra này phát hiện sai lệch **tổng số dư**, chưa xác minh từng cặp bút toán của một giao dịch. Lỗi: `400 INVALID_REQUEST` cho phân trang sai, `401 UNAUTHORIZED`, `403 FORBIDDEN`.
+
 ## Sao kê, nhập chi tiêu và thống kê — mốc 3
 
 Mọi endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>` và chỉ truy cập dữ liệu của người gọi, kể cả khi người gọi là ADMIN. Ngày truyền theo `yyyy-MM-dd` UTC; khoảng `from..to` **bao gồm cả hai ngày**, `from <= to` và tối đa 366 ngày. Không có tham số ngày mặc định; thiếu hoặc sai ngày trả `400 INVALID_DATE_RANGE`.

@@ -2,7 +2,7 @@
 
 const apiBase = "/api/v1";
 const $ = (id) => document.getElementById(id);
-const state = { token: null, user: null, wallet: null, page: 0, totalPages: 0, pendingTransfer: null, pendingGrant: null };
+const state = { token: null, user: null, wallet: null, page: 0, totalPages: 0, reconciliationPage: 0, pendingTransfer: null, pendingGrant: null };
 const money = (value) => new Intl.NumberFormat("vi-VN").format(value ?? 0);
 const dateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
@@ -69,6 +69,9 @@ function signOut(callApi = true) {
   state.wallet = null;
   state.pendingTransfer = null;
   state.pendingGrant = null;
+  state.reconciliationPage = 0;
+  $("reconciliation-results").hidden = true;
+  $("reconciliation-status").textContent = "Chưa chạy đối soát.";
   $("workspace").hidden = true;
   $("user-actions").hidden = true;
   $("auth-view").hidden = false;
@@ -134,6 +137,42 @@ async function loadHistory() {
   $("page-label").textContent = `Trang ${state.page + 1} / ${Math.max(state.totalPages, 1)}`;
   $("prev-page").disabled = state.page === 0;
   $("next-page").disabled = state.page + 1 >= state.totalPages;
+}
+
+async function loadReconciliation(page = 0) {
+  const button = $("check-reconciliation");
+  button.disabled = true;
+  $("reconciliation-status").textContent = "Đang kiểm tra số dư...";
+  $("reconciliation-status").classList.remove("negative");
+  try {
+    const report = await json(`/admin/reconciliation?page=${page}&size=20`);
+    state.reconciliationPage = page;
+    const mismatches = report.mismatchCount;
+    $("reconciliation-status").textContent = mismatches === 0
+      ? `Đã kiểm tra ${report.checkedWallets} ví lúc ${dateTime(report.checkedAt)}. Không có sai lệch.`
+      : `Đã kiểm tra ${report.checkedWallets} ví lúc ${dateTime(report.checkedAt)}. Có ${mismatches} ví cần kiểm tra.`;
+    $("reconciliation-status").classList.toggle("negative", mismatches > 0);
+    const body = $("reconciliation-body");
+    body.replaceChildren();
+    for (const item of report.items) {
+      const row = document.createElement("tr");
+      cell(row, item.walletCode);
+      cell(row, money(BigInt(item.actualBalanceDong)), "numeric");
+      cell(row, money(BigInt(item.ledgerBalanceDong)), "numeric");
+      cell(row, money(BigInt(item.differenceDong)), "numeric negative");
+      body.append(row);
+    }
+    $("reconciliation-results").hidden = mismatches === 0;
+    $("reconciliation-page").textContent = `Trang ${page + 1} / ${Math.max(1, Math.ceil(mismatches / report.size))}`;
+    $("reconciliation-prev").disabled = page === 0;
+    $("reconciliation-next").disabled = (page + 1) * report.size >= mismatches;
+  } catch (error) {
+    $("reconciliation-results").hidden = true;
+    $("reconciliation-status").textContent = error.message;
+    $("reconciliation-status").classList.add("negative");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function pending(kind, value) {
@@ -204,6 +243,9 @@ $("grant-form").addEventListener("submit", (event) => {
   sendMoney("grant", payload);
 });
 $("retry-grant").addEventListener("click", () => { if (state.pendingGrant) sendMoney("grant", state.pendingGrant); });
+$("check-reconciliation").addEventListener("click", () => loadReconciliation());
+$("reconciliation-prev").addEventListener("click", () => loadReconciliation(state.reconciliationPage - 1));
+$("reconciliation-next").addEventListener("click", () => loadReconciliation(state.reconciliationPage + 1));
 
 $("import-form").addEventListener("submit", async (event) => {
   event.preventDefault();

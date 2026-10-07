@@ -31,6 +31,8 @@ JavaFX không chứa thông tin kết nối PostgreSQL. Server kiểm tra quyề
 
 `TransferRules` giữ quy tắc thuần từ mốc 1. `TransferService` bao giao dịch bằng `@Transactional`, lấy advisory lock và khóa dòng ví theo thứ tự UUID. `WalletApiIT` kiểm tra thật trên PostgreSQL, gồm cạnh tranh số dư, request trùng và rollback sau lỗi giả lập.
 
+ADMIN có thể gọi `GET /api/v1/admin/reconciliation` để đối chiếu số dư lưu ở `wallets` với tổng bút toán `ledger_entries` theo một snapshot chỉ đọc. API trả số ví đã kiểm tra, số ví sai lệch và danh sách sai lệch phân trang; không tự sửa dữ liệu. Ba giá trị tiền của mỗi sai lệch được trả dạng chuỗi để giữ chính xác cả khi tổng bút toán vượt phạm vi `long`.
+
 ## Dữ liệu và ranh giới
 
 `wallets.balance_dong` là số dư hiện tại; `ledger_entries` là dấu vết biến động. `transfers` có một dòng mỗi lần chuyển và hai bút toán đối ứng. `admin_grants` ghi người cấp, `request_key`, lý do, số tiền và bút toán tăng ví. `GrantService` khóa theo `(admin_user_id, request_key)` trước khi đọc/ghi, còn unique constraint bảo vệ ở database; cùng khóa và nội dung trả lại biên nhận cũ. `imported_expenses` chỉ liên kết `import_batches`, không có `wallet_id` và không được gọi service cập nhật ví.

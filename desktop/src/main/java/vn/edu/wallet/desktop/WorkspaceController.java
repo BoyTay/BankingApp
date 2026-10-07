@@ -33,13 +33,14 @@ public final class WorkspaceController {
     @FXML private ScrollPane dashboardScroll, transferScroll, historyScroll, statementsScroll, importsScroll, statsScroll, adminScroll;
     @FXML private Button adminNav;
     @FXML private Label userLabel, connectionLabel, globalStatus, balanceLabel, walletCodeLabel, recentEmptyLabel;
-    @FXML private ListView<String> recentList, historyList, statsList;
+    @FXML private ListView<String> recentList, historyList, statsList, reconciliationList;
     @FXML private TextField recipientCode, transferAmount, grantWallet, grantAmount;
     @FXML private TextArea grantReason;
     @FXML private Label recipientResult, transferStatus, receiptText, historyPageLabel, detailText;
-    @FXML private Label statementStatus, selectedFileLabel, importStatus, statsTotal, statsStatus, grantStatus;
+    @FXML private Label statementStatus, selectedFileLabel, importStatus, statsTotal, statsStatus, grantStatus, reconciliationStatus;
     @FXML private Button lookupButton, confirmTransferButton, retryTransferButton, newTransferButton;
     @FXML private Button previousPageButton, nextPageButton, csvButton, pdfButton, importButton, grantButton, retryGrantButton;
+    @FXML private Button reconciliationButton, previousReconciliationButton, nextReconciliationButton;
     @FXML private DatePicker statementFrom, statementTo, statsFrom, statsTo;
     @FXML private ComboBox<String> importFormat;
     private WalletDesktopApp app;
@@ -53,6 +54,7 @@ public final class WorkspaceController {
     private Path importFile;
     private UUID importKey;
     private GrantIntent pendingGrant;
+    private int reconciliationPage;
     private boolean active = true;
     private FileDialogs fileDialogs = new FileDialogs() {
         public File save(FileChooser chooser, Window owner) { return chooser.showSaveDialog(owner); }
@@ -104,6 +106,58 @@ public final class WorkspaceController {
     @FXML private void showImports() { show(importsScroll); }
     @FXML private void showStats() { show(statsScroll); }
     @FXML private void showAdmin() { if ("ADMIN".equals(role)) show(adminScroll); }
+
+    @FXML private void checkReconciliation() {
+        reconciliationPage = 0;
+        loadReconciliation();
+    }
+
+    @FXML private void previousReconciliation() {
+        if (reconciliationPage > 0) { reconciliationPage--; loadReconciliation(); }
+    }
+
+    @FXML private void nextReconciliation() {
+        reconciliationPage++;
+        loadReconciliation();
+    }
+
+    private void loadReconciliation() {
+        if (!"ADMIN".equals(role)) return;
+        int page = reconciliationPage;
+        reconciliationButton.setDisable(true);
+        previousReconciliationButton.setDisable(true);
+        nextReconciliationButton.setDisable(true);
+        UiSupport.status(reconciliationStatus, "Đang kiểm tra số dư…", false);
+        api.get("/admin/reconciliation?page=" + page + "&size=20")
+                .whenComplete((report, failure) -> UiSupport.onUi(() -> {
+                    if (!active) return;
+                    reconciliationButton.setDisable(false);
+                    if (failure != null) {
+                        reconciliationList.setVisible(false);
+                        reconciliationList.setManaged(false);
+                        UiSupport.status(reconciliationStatus, UiSupport.error(failure), true);
+                        return;
+                    }
+                    long count = report.path("mismatchCount").longValue();
+                    long checked = report.path("checkedWallets").longValue();
+                    String checkedAt = DISPLAY_TIME.format(Instant.parse(report.path("checkedAt").asString()));
+                    UiSupport.status(reconciliationStatus, count == 0
+                            ? "Đã kiểm tra " + checked + " ví lúc " + checkedAt + ". Không có sai lệch."
+                            : "Đã kiểm tra " + checked + " ví lúc " + checkedAt + ". Có " + count + " ví cần kiểm tra.",
+                            count > 0);
+                    reconciliationList.getItems().clear();
+                    for (JsonNode item : report.path("items")) {
+                        reconciliationList.getItems().add(item.path("walletCode").asString()
+                                + "  ·  Ví: " + UiSupport.money(item.path("actualBalanceDong").asString())
+                                + "  ·  Bút toán: " + UiSupport.money(item.path("ledgerBalanceDong").asString())
+                                + "  ·  Chênh lệch: " + UiSupport.money(item.path("differenceDong").asString()));
+                    }
+                    reconciliationList.setVisible(count > 0);
+                    reconciliationList.setManaged(count > 0);
+                    previousReconciliationButton.setDisable(page == 0);
+                    nextReconciliationButton.setDisable((page + 1L) * 20 >= count);
+                }));
+    }
 
     @FXML private void loadDashboard() {
         UiSupport.status(globalStatus, "Đang tải số dư và giao dịch gần đây…", false);
