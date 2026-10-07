@@ -80,13 +80,13 @@ Lỗi: `400 INVALID_REQUEST` cho phân trang sai.
 
 ### `POST /admin/grants` — ADMIN
 
-Request: `{"recipientWalletCode":"WLT759D6C81FD0846C18597","amountDong":1000000,"reason":"So du demo dot 1"}`. Lý do 1–500 ký tự; tiền `1..1000000000000`. Response `201`:
+Request: `{"requestKey":"55e97fbc-d73d-4748-9808-c68bf34c225a","recipientWalletCode":"WLT759D6C81FD0846C18597","amountDong":1000000,"reason":"So du demo dot 1"}`. UI sinh UUID khi ADMIN xác nhận và giữ nguyên khóa **cùng toàn bộ payload** khi thử lại sau timeout. Lý do 1–500 ký tự; tiền `1..1000000000000`. Cấp mới trả `201`; cùng ADMIN, cùng `requestKey` và cùng nội dung trả `200` với **đúng body biên nhận cũ**:
 
 ```json
-{"grantId":"3465a4a7-5c42-46da-a905-dd53608547a3","adminUserId":"69a8e72e-6d31-4db0-a55e-96914f2c7da2","recipientWalletCode":"WLT759D6C81FD0846C18597","amountDong":1000000,"balanceAfterDong":1000000,"reason":"So du demo dot 1","createdAt":"2026-10-07T04:00:00Z"}
+{"grantId":"3465a4a7-5c42-46da-a905-dd53608547a3","requestKey":"55e97fbc-d73d-4748-9808-c68bf34c225a","adminUserId":"69a8e72e-6d31-4db0-a55e-96914f2c7da2","recipientWalletCode":"WLT759D6C81FD0846C18597","amountDong":1000000,"balanceAfterDong":1000000,"reason":"So du demo dot 1","createdAt":"2026-10-07T04:00:00Z"}
 ```
 
-Lỗi: `400 INVALID_REQUEST`, `400 INVALID_AMOUNT`, `403 FORBIDDEN`, `404 WALLET_NOT_FOUND`, `422 BALANCE_OVERFLOW`. Cấp tiền và bút toán audit cùng transaction. Endpoint này không có khóa chống gửi lặp; UI không tự retry sau timeout mà cần kiểm tra audit trước khi gửi lại.
+Lỗi: `400 INVALID_REQUEST` (thiếu/sai UUID hoặc lý do), `400 INVALID_AMOUNT`, `403 FORBIDDEN`, `404 WALLET_NOT_FOUND`, `409 GRANT_KEY_CONFLICT` (cùng ADMIN và khóa nhưng khác mã ví, tiền hoặc lý do), `422 BALANCE_OVERFLOW`. Cấp tiền và bút toán audit cùng transaction. Hai request đồng thời cùng ADMIN/khóa chỉ tạo một khoản cấp; yêu cầu thất bại không giữ khóa. Khóa chống trùng có phạm vi từng ADMIN. UI không tự gửi lại; nút thử lại yêu cầu cũ chỉ hiện khi kết quả chưa chắc chắn và gửi đúng payload đã xác nhận.
 
 ## Sao kê, nhập chi tiêu và thống kê — mốc 3
 

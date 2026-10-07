@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Internal Wallet</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23162b53'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-family='Arial' font-size='43' font-weight='bold' fill='white'%3EW%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Internal Wallet, trang chủ"><span class="brand-mark">W</span><span>Internal Wallet</span></a>
+    <div class="user-actions" id="user-actions" hidden><span id="user-name"></span><button type="button" class="text-button" id="logout">Đăng xuất</button></div>
+  </header>
+
+  <main>
+    <section class="auth-layout" id="auth-view">
+      <div class="intro">
+        <span class="eyebrow">VÍ ĐIỆN TỬ NỘI BỘ</span>
+        <h1>Quản lý dòng tiền<br>rõ ràng, gọn gàng.</h1>
+        <p>Đăng nhập để xem số dư, chuyển tiền, theo dõi giao dịch và thống kê chi tiêu trên một màn hình.</p>
+        <div class="intro-note"><span class="note-dot"></span> Chỉ sử dụng trên máy cá nhân hoặc qua kết nối HTTPS tin cậy.</div>
+      </div>
+      <div class="card auth-card">
+        <div class="segmented" role="group" aria-label="Chế độ tài khoản">
+          <button type="button" id="show-login" class="selected">Đăng nhập</button>
+          <button type="button" id="show-register">Tạo tài khoản</button>
+        </div>
+        <form id="login-form">
+          <h2>Chào mừng trở lại</h2><p class="muted">Sử dụng tài khoản ví của bạn để tiếp tục.</p>
+          <label>Email<input name="email" type="email" autocomplete="username" required></label>
+          <label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary full" type="submit">Đăng nhập</button>
+        </form>
+        <form id="register-form" hidden>
+          <h2>Tạo tài khoản</h2><p class="muted">Tài khoản mới có ví với số dư ban đầu bằng 0.</p>
+          <label>Họ tên<input name="displayName" autocomplete="name" maxlength="120" required></label>
+          <label>Email<input name="email" type="email" autocomplete="username" required></label>
+          <label>Mật khẩu<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+          <button class="primary full" type="submit">Tạo tài khoản</button>
+        </form>
+        <p class="form-message" id="auth-message" role="alert"></p>
+      </div>
+    </section>
+
+    <section class="workspace" id="workspace" hidden>
+      <div class="page-heading"><div><span class="eyebrow">TỔNG QUAN TÀI KHOẢN</span><h1>Ví của bạn</h1><p class="muted">Theo dõi và quản lý giao dịch của bạn.</p></div><button type="button" class="secondary" id="refresh">Làm mới</button></div>
+      <nav class="tabs" aria-label="Chức năng ví">
+        <button type="button" data-tab="overview" class="active">Tổng quan</button>
+        <button type="button" data-tab="transfer">Chuyển tiền</button>
+        <button type="button" data-tab="history">Lịch sử</button>
+        <button type="button" data-tab="expenses">Chi tiêu</button>
+        <button type="button" data-tab="statements">Sao kê</button>
+        <button type="button" data-tab="admin" id="admin-tab" hidden>Quản trị</button>
+      </nav>
+      <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+      <div class="panel" data-panel="overview">
+        <div class="overview-grid"><article class="balance-card"><span>Số dư khả dụng</span><strong id="balance">—</strong><span>VND</span></article><article class="card wallet-card"><span class="eyebrow">MÃ VÍ CỦA BẠN</span><strong id="wallet-code">—</strong><button class="text-button" type="button" id="copy-wallet">Sao chép mã ví</button></article></div>
+        <div class="section-heading"><h2>Giao dịch gần đây</h2><button class="text-button" type="button" data-go="history">Xem tất cả</button></div>
+        <div class="card table-wrap"><table><thead><tr><th>Thời gian</th><th>Loại</th><th>Ví đối ứng</th><th class="numeric">Số tiền</th></tr></thead><tbody id="recent-body"></tbody></table></div>
+      </div>
+
+      <div class="panel" data-panel="transfer" hidden>
+        <div class="card form-card"><h2>Chuyển tiền</h2><p class="muted">Kiểm tra mã ví người nhận và số tiền trước khi xác nhận.</p>
+          <form id="transfer-form"><label>Mã ví người nhận<input name="recipientWalletCode" required autocomplete="off" placeholder="WLT..."></label><label>Số tiền (VND)<input name="amountDong" type="number" min="1" max="1000000000000" step="1" required></label><button type="submit" class="primary">Xác nhận chuyển tiền</button></form>
+          <p class="muted small" id="transfer-pending" hidden>Chưa rõ kết quả. Gửi lại đúng yêu cầu cũ để tránh chuyển tiền hai lần.</p><button type="button" class="secondary" id="retry-transfer" hidden>Thử lại yêu cầu cũ</button>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="history" hidden>
+        <div class="section-heading"><h2>Lịch sử chuyển tiền</h2><button type="button" class="secondary" id="reload-history">Tải lại</button></div>
+        <div class="card table-wrap"><table><thead><tr><th>Thời gian</th><th>Loại</th><th>Ví đối ứng</th><th class="numeric">Số tiền</th><th class="numeric">Số dư sau</th></tr></thead><tbody id="history-body"></tbody></table></div>
+        <div class="pager"><button type="button" class="secondary" id="prev-page">Trước</button><span id="page-label"></span><button type="button" class="secondary" id="next-page">Sau</button></div>
+      </div>
+
+      <div class="panel" data-panel="expenses" hidden>
+        <div class="two-columns">
+          <div class="card form-card"><h2>Nhập chi tiêu CSV</h2><p class="muted">Tệp nhập giúp theo dõi chi tiêu, không trừ số dư ví.</p><form id="import-form"><label>Định dạng<select name="format"><option value="SAMPLE_A">SAMPLE_A</option><option value="SAMPLE_B">SAMPLE_B</option></select></label><label>Tệp CSV<input name="file" type="file" accept=".csv,text/csv" required></label><button class="primary" type="submit">Nhập chi tiêu</button></form></div>
+          <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div id="stats-result" class="stats-result"></div></div>
+        </div>
+      </div>
+
+      <div class="panel" data-panel="statements" hidden>
+        <div class="card form-card"><h2>Tải sao kê</h2><p class="muted">Xuất giao dịch chuyển tiền theo khoảng ngày UTC.</p><form id="statement-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Định dạng<select name="format"><option value="csv">CSV</option><option value="pdf">PDF</option></select></label><button class="primary" type="submit">Tải sao kê</button></form></div>
+      </div>
+
+      <div class="panel" data-panel="admin" hidden>
+        <div class="card form-card"><h2>Cấp tiền vào ví</h2><p class="muted">Chức năng dành cho quản trị viên. Khoản cấp được ghi vào nhật ký hệ thống.</p><form id="grant-form"><label>Mã ví nhận tiền<input name="recipientWalletCode" required placeholder="WLT..."></label><label>Số tiền (VND)<input name="amountDong" type="number" min="1" max="1000000000000" step="1" required></label><label>Lý do<input name="reason" maxlength="500" required></label><button class="primary" type="submit">Xác nhận cấp tiền</button></form><p class="muted small" id="grant-pending" hidden>Chưa rõ kết quả. Gửi lại đúng yêu cầu cũ để tránh cấp tiền hai lần.</p><button type="button" class="secondary" id="retry-grant" hidden>Thử lại yêu cầu cũ</button></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

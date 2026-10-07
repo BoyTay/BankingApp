@@ -1,6 +1,7 @@
 package vn.edu.wallet.service;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,8 +22,38 @@ public class GrantService {
     }
 
     @Transactional
-    public ApiDtos.GrantView grant(UUID adminId, ApiDtos.GrantCreate input) {
-        if (input == null || input.reason() == null || input.reason().trim().isEmpty()
+    public GrantResult grant(UUID adminId, ApiDtos.GrantCreate input) {
+        if (input == null || input.requestKey() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu mã yêu cầu");
+        }
+        // Serialize even before the first INSERT. The unique constraint remains the database backstop.
+        db.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))",
+                adminId + ":grant:" + input.requestKey());
+        List<ApiDtos.GrantView> prior = db.query("""
+                SELECT g.id,g.request_key,g.admin_user_id,g.amount_dong,g.reason,g.created_at,
+                       w.wallet_code,l.balance_after_dong
+                FROM admin_grants g JOIN wallets w ON w.id=g.recipient_wallet_id
+                JOIN ledger_entries l ON l.grant_id=g.id
+                WHERE g.admin_user_id=? AND g.request_key=?
+                """, (rs, row) -> new ApiDtos.GrantView(
+                rs.getObject("id", UUID.class), rs.getObject("request_key", UUID.class),
+                rs.getObject("admin_user_id", UUID.class), rs.getString("wallet_code"),
+                rs.getLong("amount_dong"), rs.getLong("balance_after_dong"),
+                rs.getString("reason"), rs.getTimestamp("created_at").toInstant()),
+                adminId, input.requestKey());
+        if (!prior.isEmpty()) {
+            ApiDtos.GrantView receipt = prior.getFirst();
+            boolean sameRecipient = input.recipientWalletCode() != null
+                    && receipt.recipientWalletCode().equalsIgnoreCase(input.recipientWalletCode().trim());
+            boolean sameAmount = input.amountDong() != null && input.amountDong().isIntegralNumber()
+                    && input.amountDong().canConvertToLong()
+                    && receipt.amountDong() == input.amountDong().longValue();
+            boolean sameReason = input.reason() != null && receipt.reason().equals(input.reason().trim());
+            if (sameRecipient && sameAmount && sameReason) return new GrantResult(receipt, true);
+            throw new ApiException(HttpStatus.CONFLICT, "GRANT_KEY_CONFLICT",
+                    "Mã yêu cầu đã được dùng cho khoản cấp tiền khác");
+        }
+        if (input.reason() == null || input.reason().trim().isEmpty()
                 || input.reason().trim().length() > 500) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Lý do cấp tiền không hợp lệ");
         }
@@ -38,13 +69,15 @@ public class GrantService {
         }
         UUID grantId = UUID.randomUUID();
         db.update("UPDATE wallets SET balance_dong=? WHERE id=?", after, wallet.id());
-        db.update("INSERT INTO admin_grants(id,admin_user_id,recipient_wallet_id,amount_dong,reason) VALUES (?,?,?,?,?)",
-                grantId, adminId, wallet.id(), amount, input.reason().trim());
+        db.update("INSERT INTO admin_grants(id,admin_user_id,recipient_wallet_id,request_key,amount_dong,reason) VALUES (?,?,?,?,?,?)",
+                grantId, adminId, wallet.id(), input.requestKey(), amount, input.reason().trim());
         db.update("INSERT INTO ledger_entries(id,wallet_id,grant_id,delta_dong,balance_after_dong) VALUES (?,?,?,?,?)",
                 UUID.randomUUID(), wallet.id(), grantId, amount, after);
         Instant at = db.queryForObject("SELECT created_at FROM admin_grants WHERE id=?",
                 (rs, row) -> rs.getTimestamp(1).toInstant(), grantId);
-        return new ApiDtos.GrantView(grantId, adminId, wallet.code(), amount, after,
-                input.reason().trim(), at);
+        return new GrantResult(new ApiDtos.GrantView(grantId, input.requestKey(), adminId, wallet.code(), amount, after,
+                input.reason().trim(), at), false);
     }
+
+    public record GrantResult(ApiDtos.GrantView receipt, boolean replayed) {}
 }

@@ -241,7 +241,7 @@ class WalletApiIT {
         Account outsider = register("private-c");
         Account admin = admin();
         assertError(403, "FORBIDDEN", request("POST", "/admin/grants", a.token(),
-                "{\"recipientWalletCode\":\"" + a.walletCode() + "\",\"amountDong\":100,\"reason\":\"test\"}"));
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"recipientWalletCode\":\"" + a.walletCode() + "\",\"amountDong\":100,\"reason\":\"test\"}"));
         grant(admin, a, 100);
         String id = body(transfer(a, b, 20, UUID.randomUUID())).path("transferId").asString();
         HttpResponse<String> authorizedReceipt = request("GET", "/transfers/" + id, b.token(), null);
@@ -252,6 +252,46 @@ class WalletApiIT {
         assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + id, outsider.token(), null));
         assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + id, admin.token(), null));
         assertEquals(0, body(request("GET", "/transfers", outsider.token(), null)).path("totalItems").longValue());
+    }
+
+    @Test
+    void grantRetryReturnsSameReceiptAndChangedPayloadConflicts() throws Exception {
+        Account recipient = register("grant-repeat");
+        Account other = register("grant-other");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        assertError(400, "INVALID_REQUEST", request("POST", "/admin/grants", administrator.token(),
+                "{\"recipientWalletCode\":\"" + recipient.walletCode() + "\",\"amountDong\":100,\"reason\":\"Test funding\"}"));
+        assertError(400, "INVALID_AMOUNT", grantRaw(administrator, recipient.walletCode(), "0", "Test funding", key));
+        HttpResponse<String> first = grantRaw(administrator, recipient.walletCode(), "100", "Test funding", key);
+        HttpResponse<String> replay = grantRaw(administrator, recipient.walletCode(), "100", "Test funding", key);
+        assertEquals(201, first.statusCode(), first.body());
+        assertEquals(200, replay.statusCode(), replay.body());
+        assertEquals(first.body(), replay.body());
+        assertEquals(key.toString(), body(first).path("requestKey").asString());
+        assertError(409, "GRANT_KEY_CONFLICT", grantRaw(administrator, recipient.walletCode(), "101", "Test funding", key));
+        assertError(409, "GRANT_KEY_CONFLICT", grantRaw(administrator, other.walletCode(), "100", "Test funding", key));
+        assertError(409, "GRANT_KEY_CONFLICT", grantRaw(administrator, recipient.walletCode(), "100", "Other reason", key));
+        assertEquals(100, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(0, wallet(other).path("balanceDong").longValue());
+        assertEquals(1, count("admin_grants"));
+        assertEquals(1, count("ledger_entries"));
+    }
+
+    @Test
+    void concurrentSameGrantKeyCreatesOnlyOneGrant() throws Exception {
+        Account recipient = register("grant-parallel");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        List<HttpResponse<String>> responses = parallel(
+                () -> grantRaw(administrator, recipient.walletCode(), "700", "Parallel demo", key),
+                () -> grantRaw(administrator, recipient.walletCode(), "700", "Parallel demo", key));
+        assertEquals(1, responses.stream().filter(r -> r.statusCode() == 201).count(), responses.toString());
+        assertEquals(1, responses.stream().filter(r -> r.statusCode() == 200).count(), responses.toString());
+        assertEquals(responses.get(0).body(), responses.get(1).body());
+        assertEquals(700, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(1, count("admin_grants"));
+        assertEquals(1, count("ledger_entries"));
     }
 
     @Test
@@ -419,9 +459,16 @@ class WalletApiIT {
     }
 
     private void grant(Account admin, Account to, long amount) throws Exception {
-        HttpResponse<String> response = request("POST", "/admin/grants", admin.token(),
-                "{\"recipientWalletCode\":\"" + to.walletCode() + "\",\"amountDong\":" + amount + ",\"reason\":\"Test funding\"}");
+        HttpResponse<String> response = grantRaw(admin, to.walletCode(), Long.toString(amount),
+                "Test funding", UUID.randomUUID());
         assertEquals(201, response.statusCode(), response.body());
+    }
+
+    private HttpResponse<String> grantRaw(Account admin, String recipient, String amountJson,
+                                           String reason, UUID key) throws Exception {
+        return request("POST", "/admin/grants", admin.token(),
+                "{\"requestKey\":\"" + key + "\",\"recipientWalletCode\":\"" + recipient
+                        + "\",\"amountDong\":" + amountJson + ",\"reason\":\"" + reason + "\"}");
     }
 
     private HttpResponse<String> transfer(Account from, Account to, long amount, UUID key) throws Exception {

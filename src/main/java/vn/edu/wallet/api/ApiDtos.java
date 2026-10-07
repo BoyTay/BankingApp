@@ -20,8 +20,8 @@ public final class ApiDtos {
                                String recipientWalletCode, long amountDong, String direction,
                                long myBalanceAfterDong, Instant createdAt) {}
     public record TransferPage(List<TransferView> items, int page, int size, long totalItems) {}
-    public record GrantCreate(String recipientWalletCode, JsonNode amountDong, String reason) {}
-    public record GrantView(UUID grantId, UUID adminUserId, String recipientWalletCode,
+    public record GrantCreate(UUID requestKey, String recipientWalletCode, JsonNode amountDong, String reason) {}
+    public record GrantView(UUID grantId, UUID requestKey, UUID adminUserId, String recipientWalletCode,
                             long amountDong, long balanceAfterDong, String reason, Instant createdAt) {}
     public record ImportView(UUID batchId, String format, String sourceName, int rowCount, Instant importedAt) {}
     public record ExpenseSummaryView(String key, long amountDong, long count) {}

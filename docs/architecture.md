@@ -12,7 +12,7 @@
 
 ```mermaid
 flowchart LR
-    UI[JavaFX FXML CSS] -->|HTTPS REST JSON| API[Spring Boot API]
+    UI[JavaFX FXML CSS] -->|HTTPS hoặc HTTP loopback| API[Spring Boot API]
     API --> Domain[Quy tắc nghiệp vụ]
     API --> DB[(PostgreSQL)]
     API --> Reports[CSV PDF và thống kê]
@@ -33,8 +33,10 @@ JavaFX không chứa thông tin kết nối PostgreSQL. Server kiểm tra quyề
 
 ## Dữ liệu và ranh giới
 
-`wallets.balance_dong` là số dư hiện tại; `ledger_entries` là dấu vết biến động. `transfers` có một dòng mỗi lần chuyển và hai bút toán đối ứng. `admin_grants` ghi người cấp, lý do, số tiền và bút toán tăng ví. `imported_expenses` chỉ liên kết `import_batches`, không có `wallet_id` và không được gọi service cập nhật ví.
+`wallets.balance_dong` là số dư hiện tại; `ledger_entries` là dấu vết biến động. `transfers` có một dòng mỗi lần chuyển và hai bút toán đối ứng. `admin_grants` ghi người cấp, `request_key`, lý do, số tiền và bút toán tăng ví. `GrantService` khóa theo `(admin_user_id, request_key)` trước khi đọc/ghi, còn unique constraint bảo vệ ở database; cùng khóa và nội dung trả lại biên nhận cũ. `imported_expenses` chỉ liên kết `import_batches`, không có `wallet_id` và không được gọi service cập nhật ví.
 
-## Giao diện dự kiến
+## Giao diện desktop mốc 4
 
-Phong cách tối giản cho ứng dụng tài chính: nền xanh đen `#020617`, thẻ `#0E1223`, chữ `#F8FAFC`, nút chính xanh `#22C55E`. Màn hình đăng nhập/đăng ký, dashboard, chuyển tiền (tra cứu → nhập → xác nhận → biên nhận), lịch sử, sao kê, nhập CSV/thống kê, và quản trị. Tất cả lỗi có thông điệp tiếng Việt gắn với thao tác; nút xác nhận chỉ bật khi dữ liệu hợp lệ; điều hướng và focus dùng được với bàn phím.
+Module Maven `desktop/` chỉ phụ thuộc JavaFX, Jackson và HTTP client của JDK. `login.fxml` và `workspace.fxml` định nghĩa bố cục; `wallet.css` đặt màu, kiểu chữ và trạng thái điều khiển. `WalletApiClient` gọi REST bất đồng bộ, không có JDBC hoặc thông tin PostgreSQL. `LoginController` giữ token trong client tại bộ nhớ rồi chuyển client đó cho `WorkspaceController`; đăng xuất gọi server và xóa token.
+
+Giao diện nền xanh đen, thẻ xanh navy, chữ sáng và nút chính xanh lá. Các trang gồm đăng nhập/đăng ký, tổng quan, chuyển tiền, lịch sử/biên nhận, sao kê, nhập CSV, thống kê và cấp tiền ADMIN. `WorkspaceController` giữ `TransferIntent(requestKey, recipientCode, amountDong)` sau khi người dùng xác nhận; nếu timeout hoặc HTTP 5xx, nút thử lại gửi đúng payload này. Chỉ kết quả chắc chắn mới xóa intent. Sau chuyển tiền thành công, giao diện tải lại ví và lịch sử từ server. Cấp tiền ADMIN dùng `GrantIntent(requestKey, recipientCode, amountDong, reason)` với cùng nguyên tắc retry, không tự gửi lại; bảng `admin_grants` ràng buộc unique theo `(admin_user_id, request_key)`.
