@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+target
+desktop
+docs
+samples
+db
+*.log

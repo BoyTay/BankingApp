@@ -1,6 +1,40 @@
 # Internal Wallet — đồ án Design Patterns
 
-Ứng dụng ví điện tử nội bộ bằng Java. **Mốc 4 / 4** gồm server Spring Boot/PostgreSQL và ứng dụng desktop JavaFX ở thư mục `desktop/`. Desktop dùng REST API theo [docs/api.md](docs/api.md), không kết nối trực tiếp database. Token đăng nhập chỉ nằm trong bộ nhớ tiến trình.
+Ứng dụng ví điện tử nội bộ bằng Java. **Mốc 4 / 4** gồm server Spring Boot/PostgreSQL, giao diện web tại `http://localhost:8080` và ứng dụng desktop JavaFX ở thư mục `desktop/`. Cả hai giao diện dùng REST API theo [docs/api.md](docs/api.md), không kết nối trực tiếp database. Token đăng nhập chỉ nằm trong bộ nhớ tiến trình.
+
+## Khởi chạy bằng Docker Compose
+
+Yêu cầu Docker Desktop (hoặc Docker Engine) với Compose. Compose chạy giao diện web, API và PostgreSQL; ứng dụng JavaFX vẫn có thể chạy trực tiếp trên máy. Không cần cài JDK, Maven hay PostgreSQL để dùng giao diện web bằng Docker.
+
+Trong bản web, Spring Boot phục vụ giao diện và REST API, PostgreSQL lưu ví/giao dịch, Flyway tạo và nâng cấp bảng. Các thư viện mã hóa mật khẩu, CSV và PDF phục vụ những tính năng tương ứng. Maven/JDK chỉ dùng trong bước build image; JavaFX trong `desktop/` là ứng dụng riêng và không chạy trong Compose. Testcontainers chỉ dùng khi chạy kiểm thử tích hợp, không nằm trong ứng dụng đang chạy.
+
+Mở PowerShell ở thư mục gốc dự án:
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+docker compose up --build -d
+docker compose ps
+```
+
+Trong `.env`, **đổi `DB_PASSWORD`** trước khi chạy. Nếu cần tài khoản ADMIN ban đầu, điền cả `APP_BOOTSTRAP_ADMIN_EMAIL` và `APP_BOOTSTRAP_ADMIN_PASSWORD` (ít nhất 10 ký tự). ADMIN chỉ được tạo khi email chưa tồn tại; thay đổi mật khẩu trong `.env` sau đó không đổi mật khẩu tài khoản đã tạo. Không commit `.env`.
+
+Mở **`http://localhost:8080`** trên trình duyệt để dùng ứng dụng. API chạy tại `http://localhost:8080/api/v1`. Nếu cổng 8080 đang được sử dụng, đổi `API_PORT` trong `.env` (ví dụ `18080`), mở `http://localhost:18080` và đặt `WALLET_API_URL` của desktop thành `http://localhost:18080/api/v1`. Compose chỉ mở cổng trên loopback của máy chủ; PostgreSQL chỉ truy cập được trong mạng Compose. Flyway tự áp dụng migration khi API khởi động. Kiểm tra log nếu ứng dụng chưa sẵn sàng:
+
+```powershell
+docker compose logs -f api
+```
+
+Chạy JavaFX theo mục bên dưới với JDK 25 và Maven 3.9+ trên máy. URL mặc định của desktop đã trỏ đến API này. Dừng dịch vụ bằng `docker compose down`; dữ liệu PostgreSQL vẫn được giữ trong Docker volume. Chỉ khi muốn **xóa toàn bộ dữ liệu ví thử nghiệm**, chạy `docker compose down -v`.
+
+Để build lại sau khi sửa mã server: `docker compose up --build -d`. Nếu đổi `DB_PASSWORD` sau lần khởi tạo PostgreSQL đầu tiên, phải đổi mật khẩu role trong database tương ứng; biến `POSTGRES_PASSWORD` chỉ có hiệu lực khi volume còn trống.
+
+Nếu lần khởi động trước bị lỗi do cổng host đã được sử dụng và API liên tục restart với `UnknownHostException: db`, tạo lại riêng container API để nối lại mạng Compose (không xóa dữ liệu PostgreSQL):
+
+```powershell
+docker compose up -d --force-recreate api
+docker compose ps
+```
 
 ## Chạy server trên Windows
 

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +39,12 @@ public class ApiErrors {
     public ResponseEntity<ApiDtos.ErrorView> multipart(MultipartException ex) {
         return ResponseEntity.badRequest()
                 .body(new ApiDtos.ErrorView("INVALID_REQUEST", "Multipart không hợp lệ", UUID.randomUUID()));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiDtos.ErrorView> notFound(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ApiDtos.ErrorView("NOT_FOUND", "Không tìm thấy đường dẫn", UUID.randomUUID()));
     }
 
     @ExceptionHandler(Exception.class)
