@@ -77,17 +77,30 @@
 
       <div class="panel" data-panel="expenses" hidden>
         <div class="two-columns">
-          <div class="card form-card"><h2>Nhập chi tiêu CSV</h2><p class="muted">Tệp nhập giúp theo dõi chi tiêu, không trừ số dư ví.</p><form id="import-form"><label>Định dạng<select name="format"><option value="SAMPLE_A">SAMPLE_A</option><option value="SAMPLE_B">SAMPLE_B</option></select></label><label>Tệp CSV<input name="file" type="file" accept=".csv,text/csv" required></label><button class="primary" type="submit">Nhập chi tiêu</button></form></div>
+          <div class="card form-card"><h2>Nhập khoản chi</h2><p class="muted">Tải CSV để thống kê chi tiêu. Số dư ví không thay đổi.</p><form id="import-form"><label>Tệp chi tiêu CSV<input name="file" type="file" accept=".csv,text/csv" required></label><div class="sample-links"><a href="/samples/chi-tieu-mau.csv" download>Tải tệp mẫu CSV</a></div><button class="primary" type="submit" id="preview-import">Xem trước khoản chi</button></form><p class="muted small" id="import-pending" hidden>Chưa rõ kết quả nhập. Thử lại đúng tệp và yêu cầu cũ để tránh nhập trùng.</p><button type="button" class="secondary" id="retry-import" hidden>Thử lại yêu cầu cũ</button></div>
           <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div id="stats-result" class="stats-result"></div></div>
         </div>
+        <section class="card import-preview" id="import-preview" aria-labelledby="import-preview-heading" hidden>
+          <div class="section-heading"><div><h2 id="import-preview-heading">Xem trước dữ liệu</h2><p id="import-summary" role="status" tabindex="-1"></p></div><button type="button" class="primary" id="confirm-import" hidden>Xác nhận nhập dữ liệu</button></div>
+          <div id="import-errors" hidden><h3>Lỗi cần sửa</h3><ul id="import-error-list"></ul></div>
+          <div id="import-valid" hidden><h3>Dòng hợp lệ</h3><div class="table-wrap"><table><thead><tr><th>Dòng</th><th>Ngày</th><th>Nội dung</th><th>Danh mục</th><th class="numeric">Số tiền (VND)</th></tr></thead><tbody id="import-valid-body"></tbody></table></div></div>
+        </section>
       </div>
 
       <div class="panel" data-panel="statements" hidden>
-        <div class="card form-card"><h2>Tải sao kê</h2><p class="muted">Xuất giao dịch chuyển tiền theo khoảng ngày UTC.</p><form id="statement-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Định dạng<select name="format"><option value="csv">CSV</option><option value="pdf">PDF</option></select></label><button class="primary" type="submit">Tải sao kê</button></form></div>
+        <div class="card form-card"><h2>Tải sao kê</h2><p class="muted">Xuất giao dịch chuyển tiền theo khoảng ngày UTC.</p><form id="statement-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Định dạng<select name="format"><option value="csv">CSV</option><option value="pdf">PDF</option></select></label><label>Phạm vi<select name="scope" id="statement-scope"><option value="all">Toàn bộ (tối đa 10.000 giao dịch)</option><option value="page">Từng phần (500 giao dịch mỗi tệp)</option></select></label><label id="statement-page-field" hidden>Phần số<input name="page" type="number" min="1" max="1001" step="1" value="1" required disabled></label><button class="primary" type="submit">Tải sao kê</button></form></div>
       </div>
 
       <div class="panel" data-panel="admin" hidden>
         <div class="card form-card"><h2>Cấp tiền vào ví</h2><p class="muted">Chức năng dành cho quản trị viên. Khoản cấp được ghi vào nhật ký hệ thống.</p><form id="grant-form"><label>Mã ví nhận tiền<input name="recipientWalletCode" required placeholder="WLT..."></label><label>Số tiền (VND)<input name="amountDong" type="number" min="1" max="1000000000000" step="1" required></label><label>Lý do<input name="reason" maxlength="500" required></label><button class="primary" type="submit">Xác nhận cấp tiền</button></form><p class="muted small" id="grant-pending" hidden>Chưa rõ kết quả. Gửi lại đúng yêu cầu cũ để tránh cấp tiền hai lần.</p><button type="button" class="secondary" id="retry-grant" hidden>Thử lại yêu cầu cũ</button></div>
+        <section class="card reconciliation-card" aria-labelledby="reconciliation-heading">
+          <div class="section-heading"><div><h2 id="reconciliation-heading">Đối soát số dư</h2><p class="muted">So sánh số dư ví với tổng bút toán. Báo cáo chỉ đọc dữ liệu.</p></div><button type="button" class="secondary" id="check-reconciliation">Kiểm tra</button></div>
+          <p id="reconciliation-status" role="status" aria-live="polite">Chưa chạy đối soát.</p>
+          <div id="reconciliation-results" hidden>
+            <div class="table-wrap"><table><thead><tr><th>Mã ví</th><th class="numeric">Số dư ví (VND)</th><th class="numeric">Theo bút toán (VND)</th><th class="numeric">Chênh lệch (VND)</th></tr></thead><tbody id="reconciliation-body"></tbody></table></div>
+            <div class="pager"><button type="button" class="secondary" id="reconciliation-prev">Trước</button><span id="reconciliation-page"></span><button type="button" class="secondary" id="reconciliation-next">Sau</button></div>
+          </div>
+        </section>
       </div>
     </section>
   </main>

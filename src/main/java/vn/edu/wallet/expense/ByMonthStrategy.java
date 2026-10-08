@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public final class ByMonthStrategy implements ExpenseAggregationStrategy {
+    @Override public String sqlKeyExpression() { return "to_char(e.spent_on, 'YYYY-MM')"; }
+
     @Override public List<ExpenseSummary> aggregate(List<ImportedExpense> expenses) {
         Map<YearMonth, ExpenseSummary> groups = new TreeMap<>();
         for (ImportedExpense expense : expenses) {

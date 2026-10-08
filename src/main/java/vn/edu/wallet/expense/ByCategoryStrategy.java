@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public final class ByCategoryStrategy implements ExpenseAggregationStrategy {
+    @Override public String sqlKeyExpression() { return "e.category"; }
+
     @Override public List<ExpenseSummary> aggregate(List<ImportedExpense> expenses) {
         Map<String, ExpenseSummary> groups = new TreeMap<>();
         for (ImportedExpense expense : expenses) {

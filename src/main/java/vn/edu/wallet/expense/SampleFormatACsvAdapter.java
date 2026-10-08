@@ -6,8 +6,8 @@ import org.springframework.stereotype.Component;
 
 @Component
 public final class SampleFormatACsvAdapter implements ExpenseCsvAdapter {
-    @Override public List<ImportedExpense> read(byte[] utf8Csv) {
-        return ExpenseCsvParsing.parse(utf8Csv, ',',
+    @Override public CsvPreview preview(byte[] utf8Csv) {
+        return ExpenseCsvParsing.preview(utf8Csv, ',',
                 List.of("date", "description", "category", "amount_vnd"),
                 LocalDate::parse, ExpenseCsvParsing::amountA);
     }

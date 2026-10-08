@@ -37,6 +37,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import vn.edu.wallet.service.TransferWriteHook;
 import vn.edu.wallet.auth.AuthService;
+import vn.edu.wallet.auth.AuthMaintenance;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(WalletApiIT.FaultConfig.class)
@@ -47,6 +48,7 @@ class WalletApiIT {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate db;
     @Autowired AuthService auth;
+    @Autowired AuthMaintenance authMaintenance;
     @Value("${local.server.port}") int port;
 
     @DynamicPropertySource
@@ -73,7 +75,77 @@ class WalletApiIT {
     @BeforeEach
     void reset() {
         FAIL_AFTER_DEBIT.set(false);
-        db.execute("TRUNCATE TABLE ledger_entries,transfers,admin_grants,auth_sessions,imported_expenses,import_batches,wallets,app_users CASCADE");
+        db.execute("TRUNCATE TABLE ledger_entries,transfers,admin_grants,auth_sessions,auth_rate_limits,imported_expenses,import_batches,wallets,app_users CASCADE");
+    }
+
+    @Test
+    void loginThrottleExpiresAndSuccessfulLoginClearsAttempts() throws Exception {
+        Account account = register("throttle-login");
+        Account other = register("unaffected-login");
+        String email = db.queryForObject("SELECT email FROM app_users WHERE id=?", String.class, account.userId());
+        for (int i = 0; i < 10; i++) {
+            assertError(401, "INVALID_CREDENTIALS", request("POST", "/auth/login", null,
+                    "{\"email\":\"" + email + "\",\"password\":\"incorrect-password\"}"));
+        }
+        HttpResponse<String> limited = request("POST", "/auth/login", null,
+                "{\"email\":\"" + email + "\",\"password\":\"" + account.password() + "\"}");
+        assertError(429, "RATE_LIMITED", limited);
+        int retryAfter = Integer.parseInt(limited.headers().firstValue("Retry-After").orElseThrow());
+        assertTrue(retryAfter >= 1 && retryAfter <= 60);
+        String otherEmail = db.queryForObject("SELECT email FROM app_users WHERE id=?", String.class, other.userId());
+        assertEquals(200, request("POST", "/auth/login", null,
+                "{\"email\":\"" + otherEmail + "\",\"password\":\"" + other.password() + "\"}").statusCode());
+
+        db.update("UPDATE auth_rate_limits SET window_ends_at=now()-interval '1 second' WHERE scope='LOGIN'");
+        assertEquals(200, request("POST", "/auth/login", null,
+                "{\"email\":\"" + email + "\",\"password\":\"" + account.password() + "\"}").statusCode());
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM auth_rate_limits WHERE scope='LOGIN'", Integer.class));
+        assertError(401, "INVALID_CREDENTIALS", request("POST", "/auth/login", null,
+                "{\"email\":\"" + email + "\",\"password\":\"incorrect-password\"}"));
+        assertEquals(200, request("POST", "/auth/login", null,
+                "{\"email\":\"" + email + "\",\"password\":\"" + account.password() + "\"}").statusCode());
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM auth_rate_limits WHERE scope='LOGIN'", Integer.class));
+    }
+
+    @Test
+    void registrationThrottleExpiresWithoutPermanentLockout() throws Exception {
+        for (int i = 0; i < 20; i++) {
+            assertError(400, "INVALID_EMAIL", request("POST", "/auth/register", null,
+                    "{\"email\":\"bad-email\",\"displayName\":\"Test\",\"password\":\"StrongPass123!\"}"));
+        }
+        HttpResponse<String> limited = request("POST", "/auth/register", null,
+                "{\"email\":\"new@example.test\",\"displayName\":\"Test\",\"password\":\"StrongPass123!\"}");
+        assertError(429, "RATE_LIMITED", limited);
+        assertTrue(Integer.parseInt(limited.headers().firstValue("Retry-After").orElseThrow()) <= 60);
+        db.update("UPDATE auth_rate_limits SET window_ends_at=now()-interval '1 second' WHERE scope='REGISTER'");
+        assertEquals(201, request("POST", "/auth/register", null,
+                "{\"email\":\"new@example.test\",\"displayName\":\"Test\",\"password\":\"StrongPass123!\"}").statusCode());
+    }
+
+    @Test
+    void authMaintenanceDeletesExpiredSessionsButKeepsActiveOne() throws Exception {
+        Account expired = register("expired-session");
+        Account active = register("active-session");
+        db.update("UPDATE auth_sessions SET expires_at=now()-interval '1 minute' WHERE user_id=?", expired.userId());
+        db.update("UPDATE auth_rate_limits SET window_ends_at=now()-interval '1 second'");
+        authMaintenance.purgeExpired();
+        assertEquals(1, count("auth_sessions"));
+        assertEquals(0, count("auth_rate_limits"));
+        assertError(401, "UNAUTHORIZED", request("GET", "/me/wallet", expired.token(), null));
+        assertEquals(200, request("GET", "/me/wallet", active.token(), null).statusCode());
+        assertEquals(204, request("POST", "/auth/logout", active.token(), null).statusCode());
+        authMaintenance.purgeExpired();
+        assertEquals(0, count("auth_sessions"));
+    }
+
+    @Test
+    void healthEndpointReportsDatabaseStatusWithoutCredentials() throws Exception {
+        HttpResponse<String> response = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + "/actuator/health")).GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals("UP", json.readTree(response.body()).path("status").asString());
+        assertFalse(json.readTree(response.body()).has("components"));
     }
 
     @Test
@@ -235,6 +307,75 @@ class WalletApiIT {
     }
 
     @Test
+    void reconciliationStaysBalancedAfterGrantsTransfersRetriesAndRollback() throws Exception {
+        Account administrator = admin();
+        Account sender = register("reconcile-sender");
+        Account recipient = register("reconcile-recipient");
+        assertError(401, "UNAUTHORIZED", request("GET", "/admin/reconciliation", null, null));
+        assertError(403, "FORBIDDEN", request("GET", "/admin/reconciliation", sender.token(), null));
+
+        UUID grantKey = UUID.randomUUID();
+        assertEquals(201, grantRaw(administrator, sender.walletCode(), "100", "Test funding", grantKey).statusCode());
+        assertEquals(200, grantRaw(administrator, sender.walletCode(), "100", "Test funding", grantKey).statusCode());
+        UUID transferKey = UUID.randomUUID();
+        assertEquals(201, transfer(sender, recipient, 40, transferKey).statusCode());
+        assertEquals(200, transfer(sender, recipient, 40, transferKey).statusCode());
+        JsonNode balanced = body(request("GET", "/admin/reconciliation", administrator.token(), null));
+        assertEquals(3, balanced.path("checkedWallets").longValue());
+        assertEquals(0, balanced.path("mismatchCount").longValue());
+        assertEquals(0, balanced.path("items").size());
+        assertFalse(balanced.path("checkedAt").asString().isBlank());
+
+        FAIL_AFTER_DEBIT.set(true);
+        assertEquals(500, transfer(sender, recipient, 10, UUID.randomUUID()).statusCode());
+        FAIL_AFTER_DEBIT.set(false);
+        JsonNode afterRollback = body(request("GET", "/admin/reconciliation", administrator.token(), null));
+        assertEquals(0, afterRollback.path("mismatchCount").longValue());
+        assertEquals(60, wallet(sender).path("balanceDong").longValue());
+        assertEquals(40, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(1, count("admin_grants"));
+        assertEquals(1, count("transfers"));
+        assertEquals(3, count("ledger_entries"));
+    }
+
+    @Test
+    void reconciliationReportsExactDifferencesWithoutChangingWallets() throws Exception {
+        Account administrator = admin();
+        Account sender = register("reconcile-a");
+        Account recipient = register("reconcile-b");
+        grant(administrator, sender, 100);
+        assertEquals(201, transfer(sender, recipient, 40, UUID.randomUUID()).statusCode());
+        db.update("UPDATE wallets SET balance_dong=65 WHERE wallet_code=?", sender.walletCode());
+        db.update("UPDATE wallets SET balance_dong=37 WHERE wallet_code=?", recipient.walletCode());
+
+        JsonNode firstPage = body(request("GET", "/admin/reconciliation?page=0&size=1", administrator.token(), null));
+        JsonNode secondPage = body(request("GET", "/admin/reconciliation?page=1&size=1", administrator.token(), null));
+        assertEquals(3, firstPage.path("checkedWallets").longValue());
+        assertEquals(2, firstPage.path("mismatchCount").longValue());
+        assertEquals(1, firstPage.path("items").size());
+        assertEquals(1, secondPage.path("items").size());
+        List<JsonNode> mismatches = List.of(firstPage.path("items").get(0), secondPage.path("items").get(0));
+        JsonNode senderMismatch = mismatches.stream()
+                .filter(item -> item.path("walletCode").asString().equals(sender.walletCode())).findFirst().orElseThrow();
+        JsonNode recipientMismatch = mismatches.stream()
+                .filter(item -> item.path("walletCode").asString().equals(recipient.walletCode())).findFirst().orElseThrow();
+        assertEquals("65", senderMismatch.path("actualBalanceDong").asString());
+        assertEquals("60", senderMismatch.path("ledgerBalanceDong").asString());
+        assertEquals("5", senderMismatch.path("differenceDong").asString());
+        assertEquals("37", recipientMismatch.path("actualBalanceDong").asString());
+        assertEquals("40", recipientMismatch.path("ledgerBalanceDong").asString());
+        assertEquals("-3", recipientMismatch.path("differenceDong").asString());
+        assertEquals(65, wallet(sender).path("balanceDong").longValue());
+        assertEquals(37, wallet(recipient).path("balanceDong").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation?page=2&size=1",
+                administrator.token(), null)).path("items").size());
+        assertError(400, "INVALID_REQUEST", request("GET",
+                "/admin/reconciliation?page=-1&size=20", administrator.token(), null));
+        assertError(400, "INVALID_REQUEST", request("GET",
+                "/admin/reconciliation?page=0&size=101", administrator.token(), null));
+    }
+
+    @Test
     void userCannotGrantOrReadOtherPeoplesReceipt() throws Exception {
         Account a = register("private-a");
         Account b = register("private-b");
@@ -336,6 +477,43 @@ class WalletApiIT {
     }
 
     @Test
+    void pagedStatementsReassembleToTheOriginalCsv() throws Exception {
+        Account sender = register("page-sender");
+        Account recipient = register("page-recipient");
+        grant(admin(), sender, 100);
+        String firstId = body(transfer(sender, recipient, 10, UUID.randomUUID())).path("transferId").asString();
+        String secondId = body(transfer(sender, recipient, 20, UUID.randomUUID())).path("transferId").asString();
+        String thirdId = body(transfer(sender, recipient, 30, UUID.randomUUID())).path("transferId").asString();
+        db.update("UPDATE transfers SET created_at='2026-01-01 00:00:00+00' WHERE id=?", UUID.fromString(firstId));
+        db.update("UPDATE transfers SET created_at='2026-01-02 00:00:00+00' WHERE id=?", UUID.fromString(secondId));
+        db.update("UPDATE transfers SET created_at='2026-01-03 00:00:00+00' WHERE id=?", UUID.fromString(thirdId));
+        String path = "/statements?from=2026-01-01&to=2026-12-31&format=csv";
+        List<String> all = new String(download(sender, path).body(), StandardCharsets.UTF_8).lines().toList();
+        HttpResponse<byte[]> first = download(sender, path + "&page=0&size=2");
+        HttpResponse<byte[]> second = download(sender, path + "&page=1&size=2");
+        assertEquals(200, first.statusCode());
+        assertEquals("true", first.headers().firstValue("X-Has-More").orElseThrow());
+        assertEquals("false", second.headers().firstValue("X-Has-More").orElseThrow());
+        assertTrue(first.headers().firstValue("Content-Disposition").orElse("").contains("page-1.csv"));
+        List<String> firstLines = new String(first.body(), StandardCharsets.UTF_8).lines().toList();
+        List<String> secondLines = new String(second.body(), StandardCharsets.UTF_8).lines().toList();
+        List<String> combined = new ArrayList<>(firstLines);
+        combined.addAll(secondLines.subList(1, secondLines.size()));
+        assertEquals(all, combined);
+        HttpResponse<byte[]> pdfPage = download(sender,
+                "/statements?from=2026-01-01&to=2026-12-31&format=pdf&page=0&size=2");
+        assertEquals(200, pdfPage.statusCode());
+        assertEquals("true", pdfPage.headers().firstValue("X-Has-More").orElseThrow());
+        try (var document = Loader.loadPDF(pdfPage.body())) {
+            String pageText = new PDFTextStripper().getText(document);
+            assertTrue(pageText.contains("Tổng chuyển đi: 30 VND"));
+            assertFalse(pageText.contains("Tổng chuyển đi: 60 VND"));
+        }
+        assertError(400, "INVALID_PAGE", request("GET", path + "&page=0&size=1001", sender.token(), null));
+        assertError(400, "INVALID_PAGE", request("GET", path + "&page=1", sender.token(), null));
+    }
+
+    @Test
     void importBothFormatsAggregatesOnlyOwnerAndNeverChangesWalletOrLedger() throws Exception {
         Account a = register("expense-a");
         Account b = register("expense-b");
@@ -361,6 +539,8 @@ class WalletApiIT {
         assertEquals(100000, category.path("totalAmountDong").longValue());
         assertEquals(4, category.path("totalCount").longValue());
         assertEquals(4, category.path("items").size());
+        assertEquals(List.of("An uong", "Di lai", "Ăn uống", "Đi lại"),
+                category.path("items").values().stream().map(item -> item.path("key").asString()).toList());
         JsonNode month = body(request("GET", "/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=month", a.token(), null));
         assertEquals("2026-01", month.path("items").get(0).path("key").asString());
         assertEquals(57000, month.path("items").get(0).path("amountDong").longValue());
@@ -369,6 +549,77 @@ class WalletApiIT {
         JsonNode other = body(request("GET", "/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category", b.token(), null));
         assertEquals(0, other.path("totalAmountDong").longValue());
         assertEquals(0, other.path("items").size());
+    }
+
+    @Test
+    void csvPreviewShowsAllRowErrorsWithoutWritingAndConfirmationIsIdempotent() throws Exception {
+        Account account = register("preview-a");
+        byte[] mixed = ("date,description,category,amount_vnd\n"
+                + "2026-01-01,Lunch,Food,12000\n"
+                + "bad-date,Taxi,Travel,15000\n"
+                + "2026-01-03,Shop,Other,12.50\n"
+                + "2026-01-04,Coffee,Food,8000\n").getBytes(StandardCharsets.UTF_8);
+        HttpResponse<String> preview = preview(account, "SAMPLE_A", mixed);
+        assertEquals(200, preview.statusCode(), preview.body());
+        JsonNode result = body(preview);
+        assertEquals(4, result.path("rowCount").intValue());
+        assertFalse(result.path("canImport").booleanValue());
+        assertEquals(2, result.path("validRows").size());
+        assertEquals(2, result.path("validRows").get(0).path("sourceRow").intValue());
+        assertEquals(5, result.path("validRows").get(1).path("sourceRow").intValue());
+        assertEquals(2, result.path("errors").size());
+        assertEquals(3, result.path("errors").get(0).path("sourceRow").intValue());
+        assertEquals("INVALID_CSV", result.path("errors").get(0).path("code").asString());
+        assertEquals(4, result.path("errors").get(1).path("sourceRow").intValue());
+        assertEquals("INVALID_AMOUNT", result.path("errors").get(1).path("code").asString());
+        assertEquals(0, count("import_batches"));
+        assertEquals(0, count("imported_expenses"));
+        assertError(400, "INVALID_CSV", upload(account, "SAMPLE_A", UUID.randomUUID(), mixed));
+        assertEquals(0, count("import_batches"));
+
+        byte[] clean = ("date,description,category,amount_vnd\n"
+                + "2026-01-01,Lunch,Food,12000\n"
+                + "2026-01-04,Coffee,Food,8000\n").getBytes(StandardCharsets.UTF_8);
+        JsonNode cleanPreview = body(preview(account, "SAMPLE_A", clean));
+        assertTrue(cleanPreview.path("canImport").booleanValue());
+        assertEquals(2, cleanPreview.path("validRows").size());
+        assertEquals(0, count("import_batches"));
+        UUID key = UUID.randomUUID();
+        HttpResponse<String> first = upload(account, "SAMPLE_A", key, clean);
+        assertEquals(201, first.statusCode(), first.body());
+        HttpResponse<String> retry = upload(account, "SAMPLE_A", key, clean);
+        assertEquals(200, retry.statusCode(), retry.body());
+        assertEquals(body(first), body(retry));
+        assertEquals(1, count("import_batches"));
+        assertEquals(2, count("imported_expenses"));
+    }
+
+    @Test
+    void csvPreviewUsesSecondAdapterAndReportsFileErrors() throws Exception {
+        Account account = register("preview-b");
+        byte[] sampleB = Files.readAllBytes(Path.of("samples/expenses-b.csv"));
+        JsonNode good = body(preview(account, "SAMPLE_B", sampleB));
+        assertTrue(good.path("canImport").booleanValue());
+        assertEquals(2, good.path("validRows").size());
+        byte[] webSample = Files.readAllBytes(Path.of("samples/chi-tieu-mau.csv"));
+        assertEquals(0xEF, Byte.toUnsignedInt(webSample[0]));
+        assertEquals(0xBB, Byte.toUnsignedInt(webSample[1]));
+        assertEquals(0xBF, Byte.toUnsignedInt(webSample[2]));
+        JsonNode downloadable = body(preview(account, "SAMPLE_B", webSample));
+        assertTrue(downloadable.path("canImport").booleanValue());
+        assertEquals(2, downloadable.path("validRows").size());
+        assertEquals(0, count("import_batches"));
+        JsonNode badHeader = body(preview(account, "SAMPLE_B", "wrong;header\n1;2\n".getBytes(StandardCharsets.UTF_8)));
+        assertFalse(badHeader.path("canImport").booleanValue());
+        assertEquals(1, badHeader.path("errors").get(0).path("sourceRow").intValue());
+        JsonNode badUtf8 = body(preview(account, "SAMPLE_B", new byte[] {(byte) 0xC3, 0x28}));
+        assertFalse(badUtf8.path("canImport").booleanValue());
+        assertEquals("INVALID_CSV", badUtf8.path("errors").get(0).path("code").asString());
+        JsonNode empty = body(preview(account, "SAMPLE_B", new byte[0]));
+        assertFalse(empty.path("canImport").booleanValue());
+        assertEquals(1, empty.path("errors").size());
+        assertEquals(401, preview(null, "SAMPLE_B", sampleB).statusCode());
+        assertEquals(0, count("import_batches"));
     }
 
     @Test
@@ -429,6 +680,21 @@ class WalletApiIT {
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build();
         return http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    private HttpResponse<String> preview(Account account, String format, byte[] file) throws Exception {
+        String boundary = "test-" + UUID.randomUUID();
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"expenses.csv\"\r\n"
+                + "Content-Type: text/csv\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(file);
+        body.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port
+                        + "/api/v1/expense-imports/preview?format=" + format))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary);
+        if (account != null) request.header("Authorization", "Bearer " + account.token());
+        return http.send(request.POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     private Account register(String label) throws Exception {
