@@ -15,10 +15,18 @@ public class WalletQueries {
     public WalletQueries(JdbcTemplate db) { this.db = db; }
 
     public WalletRow ownedBy(UUID userId) {
-        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong FROM wallets WHERE owner_id=?",
+        return ownedBy(userId, null);
+    }
+
+    public WalletRow ownedBy(UUID userId, UUID accountId) {
+        String where = accountId == null
+                ? "owner_id=? AND is_default=true AND account_status='ACTIVE'"
+                : "owner_id=? AND id=? AND account_status='ACTIVE'";
+        Object[] args = accountId == null ? new Object[] {userId} : new Object[] {userId, accountId};
+        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong FROM wallets WHERE " + where,
                 (rs, row) -> new WalletRow(rs.getObject("id", UUID.class),
                         rs.getObject("owner_id", UUID.class), rs.getString("wallet_code"),
-                        rs.getLong("balance_dong")), userId);
+                        rs.getLong("balance_dong")), args);
         if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
         return rows.getFirst();
     }

@@ -1,6 +1,7 @@
 package vn.edu.wallet.api;
 
 import java.io.IOException;
+import java.util.UUID;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,9 +25,10 @@ public class StatementController {
             @RequestParam(name = "from", required = false) String from,
             @RequestParam(name = "to", required = false) String to,
             @RequestParam(name = "format", required = false) String format,
+            @RequestParam(name = "accountId", required = false) UUID accountId,
             @RequestParam(name = "page", required = false) Integer page,
             @RequestParam(name = "size", required = false) Integer size) throws IOException {
-        StatementService.ExportedFile file = statements.export(principal.userId(), from, to, format, page, size);
+        StatementService.ExportedFile file = statements.export(principal.userId(), accountId, from, to, format, page, size);
         ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.filename() + "\"")
                 .contentType(MediaType.parseMediaType(file.contentType()));

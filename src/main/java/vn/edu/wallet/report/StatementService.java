@@ -39,6 +39,12 @@ public class StatementService {
     @Transactional(readOnly = true)
     public ExportedFile export(UUID userId, String from, String to, String requestedFormat,
                                Integer page, Integer size) throws IOException {
+        return export(userId, null, from, to, requestedFormat, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public ExportedFile export(UUID userId, UUID accountId, String from, String to, String requestedFormat,
+                               Integer page, Integer size) throws IOException {
         DateRange range = DateRange.parse(from, to);
         String format = requestedFormat == null ? "" : requestedFormat.toLowerCase(Locale.ROOT);
         StatementExporterCreator creator = switch (format) {
@@ -51,7 +57,7 @@ public class StatementService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_PAGE",
                     "page phải từ 0 đến 1000 và size từ 1 đến 1000");
         }
-        WalletQueries.WalletRow wallet = wallets.ownedBy(userId);
+        WalletQueries.WalletRow wallet = wallets.ownedBy(userId, accountId);
         List<Statement.Line> lines = db.query("""
                 SELECT t.id,t.created_at,t.amount_dong,t.sender_wallet_id,
                        t.sender_balance_after_dong,t.recipient_balance_after_dong,

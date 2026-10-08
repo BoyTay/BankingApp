@@ -42,6 +42,16 @@ Không có body. Response `204` không có body. Gọi lại bằng token đã t
 
 Response `200`: `{"walletId":"759d6c81-fd08-46c1-8597-85ddd790bf7c","walletCode":"WLT759D6C81FD0846C18597","balanceDong":0}`.
 
+Endpoint tương thích giao diện hiện tại, luôn trả tài khoản Thanh toán mặc định.
+
+### `GET /me/accounts`, `GET /me/accounts/{id}` — USER/ADMIN
+
+Liệt kê hoặc xem một tài khoản thuộc người gọi. Mỗi phần tử có `accountId`, `accountCode`, `accountType`, `status`, `isDefault`, `balanceDong`. Tài khoản của người khác trả `404 ACCOUNT_NOT_FOUND`.
+
+### `POST /me/accounts` — USER/ADMIN
+
+Request: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"CHECKING"}`. Hiện chỉ mở thêm tài khoản Thanh toán; Tiết kiệm và Tín dụng sẽ được bật sau khi hoàn tất quy tắc phí và giao dịch. Tài khoản mới có số dư 0, không thay tài khoản mặc định. Mở mới trả `201`, gửi lại cùng `requestKey` trả `200` và cùng tài khoản. Thiếu trường trả `400 INVALID_REQUEST`; loại chưa hỗ trợ trả `400 ACCOUNT_TYPE_UNAVAILABLE`.
+
 ### `GET /wallets/lookup/{walletCode}` — USER/ADMIN
 
 Response `200`: `{"walletId":"9b292dd2-313f-44de-ac18-12419025d450","walletCode":"WLT9B292DD2313F44DEAC18","displayName":"Tran Binh"}`. Không trả email hoặc số dư người nhận. Lỗi: `404 WALLET_NOT_FOUND`.
@@ -56,7 +66,7 @@ UI sinh một `requestKey` UUID khi người dùng xác nhận; retry do timeout
 {"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001}
 ```
 
-Giao dịch mới trả `201`; retry giống hệt trả `200` với **cùng body** biên nhận. Ví nguồn lấy từ token, client không được chọn. Response:
+Giao dịch mới trả `201`; retry giống hệt trả `200` với **cùng body** biên nhận. Có thể truyền thêm `sourceAccountId` để chọn tài khoản Thanh toán nguồn thuộc người gọi; bỏ qua trường này thì dùng tài khoản mặc định. Response:
 
 ```json
 {"transferId":"6bc7b1af-3e67-4c8c-bbb7-8edf74543045","requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","senderWalletCode":"WLT759D6C81FD0846C18597","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001,"direction":"OUTGOING","myBalanceAfterDong":874999,"createdAt":"2026-10-07T05:00:00Z"}
@@ -70,7 +80,7 @@ Response `200`: cùng schema biên nhận ở trên. `direction` và `myBalanceA
 
 ### `GET /transfers?page=0&size=20` — USER/ADMIN
 
-`page` từ 0; `size` từ 1 đến 100, mặc định 20. Sắp xếp `createdAt DESC, transferId DESC`. Chỉ giao dịch mà ví hiện tại là nguồn hoặc đích. Response `200`:
+`page` từ 0; `size` từ 1 đến 100, mặc định 20. Có thể thêm `accountId` để xem lịch sử một tài khoản thuộc người gọi; thiếu thì dùng tài khoản mặc định. Sắp xếp `createdAt DESC, transferId DESC`. Chỉ giao dịch mà tài khoản đã chọn là nguồn hoặc đích. Response `200`:
 
 ```json
 {"items":[{"transferId":"6bc7b1af-3e67-4c8c-bbb7-8edf74543045","requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","senderWalletCode":"WLT759D6C81FD0846C18597","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001,"direction":"OUTGOING","myBalanceAfterDong":874999,"createdAt":"2026-10-07T05:00:00Z"}],"page":0,"size":20,"totalItems":1}
@@ -106,7 +116,7 @@ Mọi endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>` v�
 
 ### `GET /statements?from=2026-01-01&to=2026-01-31&format=csv|pdf`
 
-Response `200` là **tệp nhị phân**, không phải JSON. Chỉ liệt kê các `transfers` của ví người gọi trong khoảng ngày; cấp tiền quản trị và chi tiêu CSV không nằm trong sao kê chuyển tiền. Dòng giao dịch có thời điểm UTC, mã giao dịch, chiều `OUTGOING`/`INCOMING`, mã ví đối ứng, số tiền VND nguyên đồng và **số dư sau của chính ví người gọi**. Kể cả PDF/CSV cũng không chứa số dư của ví đối ứng. Tối đa 10.000 giao dịch trong một lần xuất; vượt mức trả `422 STATEMENT_TOO_LARGE`.
+Response `200` là **tệp nhị phân**, không phải JSON. Có thể thêm `accountId` để xuất sao kê một tài khoản thuộc người gọi; thiếu thì dùng tài khoản mặc định. Chỉ liệt kê các `transfers` của tài khoản đã chọn trong khoảng ngày; cấp tiền quản trị và chi tiêu CSV không nằm trong sao kê chuyển tiền. Dòng giao dịch có thời điểm UTC, mã giao dịch, chiều `OUTGOING`/`INCOMING`, mã ví đối ứng, số tiền VND nguyên đồng và **số dư sau của chính tài khoản người gọi**. Kể cả PDF/CSV cũng không chứa số dư của tài khoản đối ứng. Tối đa 10.000 giao dịch trong một lần xuất; vượt mức trả `422 STATEMENT_TOO_LARGE`.
 
 - `format=csv`: `Content-Type: text/csv; charset=UTF-8`; `Content-Disposition: attachment; filename="statement-20260101-20260131.csv"`. Nội dung UTF-8 có BOM để Excel Windows nhận tiếng Việt; header là `Thời gian UTC,Mã giao dịch,Loại,Ví đối ứng,Số tiền (VND),Số dư sau (VND)`.
 - `format=pdf`: `Content-Type: application/pdf`; `Content-Disposition: attachment; filename="statement-20260101-20260131.pdf"`. PDF nhúng font Unicode và có tiêu đề, mã ví, khoảng ngày, các dòng giao dịch cùng tổng tiền vào/ra.

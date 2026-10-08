@@ -38,4 +38,5 @@ GitHub Actions chạy unit tests, integration tests với PostgreSQL tạm và b
 - [Design patterns](docs/patterns.md)
 - [Vận hành, sao lưu và khôi phục](docs/operations.md)
 - [Đo hiệu năng thống kê và sao kê](docs/performance.md)
+- [Lộ trình nhiều loại tài khoản và quy tắc phí](docs/account-types.md)
 - [Tệp mẫu nhập chi tiêu CSV](samples/chi-tieu-mau.csv)

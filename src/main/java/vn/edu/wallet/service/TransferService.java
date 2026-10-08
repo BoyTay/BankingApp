@@ -42,7 +42,7 @@ public class TransferService {
         if (input == null || input.requestKey() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu mã yêu cầu");
         }
-        WalletQueries.WalletRow sender = wallets.ownedBy(userId);
+        WalletQueries.WalletRow sender = wallets.ownedBy(userId, input.sourceAccountId());
         String lockKey = sender.id() + ":" + input.requestKey();
         // PostgreSQL transaction advisory lock serializes the same sender/requestKey,
         // including the interval before the first INSERT has committed.
@@ -107,14 +107,27 @@ public class TransferService {
     }
 
     public ApiDtos.TransferView receiptForUser(UUID transferId, UUID userId) {
-        return byIdForWallet(transferId, wallets.ownedBy(userId).id());
+        List<UUID> accountIds = db.query("""
+                SELECT CASE WHEN sw.owner_id=? THEN sw.id ELSE rw.id END AS account_id
+                FROM transfers t JOIN wallets sw ON sw.id=t.sender_wallet_id
+                JOIN wallets rw ON rw.id=t.recipient_wallet_id
+                WHERE t.id=? AND (sw.owner_id=? OR rw.owner_id=?)
+                """, (rs, row) -> rs.getObject("account_id", UUID.class), userId, transferId, userId, userId);
+        if (accountIds.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "TRANSFER_NOT_FOUND", "Không tìm thấy giao dịch");
+        }
+        return byIdForWallet(transferId, accountIds.getFirst());
     }
 
     public ApiDtos.TransferPage history(UUID userId, int page, int size) {
+        return history(userId, null, page, size);
+    }
+
+    public ApiDtos.TransferPage history(UUID userId, UUID accountId, int page, int size) {
         if (page < 0 || size < 1 || size > 100) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Phân trang không hợp lệ");
         }
-        UUID walletId = wallets.ownedBy(userId).id();
+        UUID walletId = wallets.ownedBy(userId, accountId).id();
         long offset = (long) page * size;
         Long count = db.queryForObject("SELECT count(*) FROM transfers WHERE sender_wallet_id=? OR recipient_wallet_id=?",
                 Long.class, walletId, walletId);

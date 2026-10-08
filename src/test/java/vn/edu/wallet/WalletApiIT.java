@@ -79,6 +79,51 @@ class WalletApiIT {
     }
 
     @Test
+    void multipleCheckingAccountsKeepOwnershipAndLegacyDefault() throws Exception {
+        Account owner = register("multi-owner");
+        Account other = register("multi-other");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        String open = "{\"requestKey\":\"" + key + "\",\"type\":\"CHECKING\"}";
+        HttpResponse<String> created = request("POST", "/me/accounts", owner.token(), open);
+        assertEquals(201, created.statusCode(), created.body());
+        JsonNode secondary = body(created);
+        UUID secondaryId = UUID.fromString(secondary.path("accountId").asString());
+        String secondaryCode = secondary.path("accountCode").asString();
+        assertFalse(secondary.path("isDefault").asBoolean());
+        assertEquals(created.body(), request("POST", "/me/accounts", owner.token(), open).body());
+        assertEquals(2, body(request("GET", "/me/accounts", owner.token(), null)).size());
+        assertEquals(owner.walletCode(), wallet(owner).path("walletCode").asString());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + secondaryId,
+                other.token(), null));
+        assertError(400, "ACCOUNT_TYPE_UNAVAILABLE", request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}"));
+
+        assertEquals(201, grantRaw(administrator, secondaryCode, "100", "fund secondary",
+                UUID.randomUUID()).statusCode());
+        UUID transferKey = UUID.randomUUID();
+        String transferBody = "{\"requestKey\":\"" + transferKey + "\",\"recipientWalletCode\":\""
+                + other.walletCode() + "\",\"amountDong\":40,\"sourceAccountId\":\"" + secondaryId + "\"}";
+        HttpResponse<String> sent = request("POST", "/transfers", owner.token(), transferBody);
+        assertEquals(201, sent.statusCode(), sent.body());
+        assertEquals(200, request("POST", "/transfers", owner.token(), transferBody).statusCode());
+        String transferId = body(sent).path("transferId").asString();
+        assertEquals(200, request("GET", "/transfers/" + transferId, owner.token(), null).statusCode());
+        assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + transferId,
+                administrator.token(), null));
+        assertEquals(0, body(request("GET", "/transfers", owner.token(), null)).path("totalItems").longValue());
+        assertEquals(1, body(request("GET", "/transfers?accountId=" + secondaryId,
+                owner.token(), null)).path("totalItems").longValue());
+        assertError(404, "WALLET_NOT_FOUND", request("GET", "/transfers?accountId=" + secondaryId,
+                other.token(), null));
+        String statementPath = "/statements?from=2026-01-01&to=2026-12-31&format=csv&accountId=" + secondaryId;
+        assertTrue(new String(download(owner, statementPath).body(), StandardCharsets.UTF_8).contains(transferId));
+        assertEquals(404, download(other, statementPath).statusCode());
+        assertEquals(60, body(request("GET", "/me/accounts/" + secondaryId,
+                owner.token(), null)).path("balanceDong").longValue());
+    }
+
+    @Test
     void loginThrottleExpiresAndSuccessfulLoginClearsAttempts() throws Exception {
         Account account = register("throttle-login");
         Account other = register("unaffected-login");
