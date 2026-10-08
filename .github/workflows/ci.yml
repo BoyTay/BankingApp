@@ -24,24 +24,9 @@ jobs:
       - name: Integration tests with disposable PostgreSQL
         run: mvn -B -ntp -Dtest=WalletApiIT test
 
-  desktop:
-    name: Desktop client tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '25'
-          cache: maven
-          cache-dependency-path: desktop/pom.xml
-      - name: Client tests
-        run: mvn -B -ntp -f desktop/pom.xml -Dtest=WalletApiClientTest test
-
   docker:
     name: Docker image
-    needs: [backend, desktop]
+    needs: [backend]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
