@@ -2,7 +2,7 @@
 
 const apiBase = "/api/v1";
 const $ = (id) => document.getElementById(id);
-const state = { token: null, user: null, wallet: null, page: 0, totalPages: 0, reconciliationPage: 0, pendingTransfer: null, pendingGrant: null };
+const state = { token: null, user: null, wallet: null, page: 0, totalPages: 0, reconciliationPage: 0, pendingTransfer: null, pendingGrant: null, importPreview: null, pendingImport: null };
 const money = (value) => new Intl.NumberFormat("vi-VN").format(value ?? 0);
 const dateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
@@ -69,6 +69,10 @@ function signOut(callApi = true) {
   state.wallet = null;
   state.pendingTransfer = null;
   state.pendingGrant = null;
+  state.pendingImport = null;
+  clearImportPreview();
+  lockImportForm(false);
+  $("import-form").reset();
   state.reconciliationPage = 0;
   $("reconciliation-results").hidden = true;
   $("reconciliation-status").textContent = "Chưa chạy đối soát.";
@@ -247,18 +251,119 @@ $("check-reconciliation").addEventListener("click", () => loadReconciliation());
 $("reconciliation-prev").addEventListener("click", () => loadReconciliation(state.reconciliationPage - 1));
 $("reconciliation-next").addEventListener("click", () => loadReconciliation(state.reconciliationPage + 1));
 
-$("import-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const data = new FormData(event.currentTarget);
-  const format = data.get("format");
-  data.delete("format");
-  data.set("requestKey", crypto.randomUUID());
+let importPreviewVersion = 0;
+let importSending = false;
+
+function lockImportForm(locked) {
+  $("import-form").querySelectorAll("input, button").forEach((control) => { control.disabled = locked; });
+  $("import-pending").hidden = !locked || importSending;
+  $("retry-import").hidden = !locked || importSending;
+}
+
+function clearImportPreview() {
+  importPreviewVersion++;
+  state.importPreview = null;
+  $("import-preview").hidden = true;
+  $("confirm-import").hidden = true;
+  $("import-valid-body").replaceChildren();
+  $("import-error-list").replaceChildren();
+}
+
+function renderImportPreview(result) {
+  $("import-preview").hidden = false;
+  $("import-summary").textContent = `${result.sourceName}: ${result.rowCount} dòng dữ liệu, ${result.validRows.length} hợp lệ, ${result.errors.length} lỗi. ${result.canImport ? "Kiểm tra và xác nhận để lưu." : "Sửa lỗi rồi xem trước lại; chưa có dữ liệu nào được lưu."}`;
+  const errors = $("import-error-list");
+  errors.replaceChildren();
+  for (const error of result.errors) {
+    const item = document.createElement("li");
+    item.textContent = error.sourceRow == null ? error.message : `Dòng ${error.sourceRow}: ${error.message.replace(/^Dòng \d+: /, "")}`;
+    errors.append(item);
+  }
+  $("import-errors").hidden = !result.errors.length;
+  const rows = $("import-valid-body");
+  rows.replaceChildren();
+  for (const expense of result.validRows) {
+    const row = document.createElement("tr");
+    cell(row, expense.sourceRow);
+    cell(row, expense.spentOn);
+    cell(row, expense.description);
+    cell(row, expense.category);
+    cell(row, money(expense.amountDong), "numeric");
+    rows.append(row);
+  }
+  $("import-valid").hidden = !result.validRows.length;
+  $("confirm-import").hidden = !result.canImport;
+  $("import-summary").focus();
+}
+
+async function sendImport() {
+  if (!state.pendingImport || importSending) return;
+  importSending = true;
+  lockImportForm(true);
+  const { format, file, requestKey } = state.pendingImport;
+  const data = new FormData();
+  data.set("file", file);
+  data.set("requestKey", requestKey);
   try {
     const result = await json(`/expense-imports?format=${encodeURIComponent(format)}`, { method: "POST", body: data });
+    state.pendingImport = null;
+    $("import-form").reset();
+    clearImportPreview();
     message(`Đã nhập ${result.rowCount} khoản chi từ ${result.sourceName}.`);
-    event.currentTarget.reset();
-  } catch (error) { message(error.message, true); }
+  } catch (error) {
+    if (error.status && error.status < 500) state.pendingImport = null;
+    message(error.message, true);
+  } finally {
+    importSending = false;
+    lockImportForm(Boolean(state.pendingImport));
+  }
+}
+
+async function checkExpenseFile(file) {
+  const firstLine = (await file.slice(0, 4096).text()).replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0].trim();
+  if (firstLine.startsWith("Thời gian UTC,") && firstLine.includes("Mã giao dịch")) {
+    throw new Error("Đây là CSV sao kê chuyển tiền. Hãy dùng tệp mẫu chi tiêu trên trang.");
+  }
+  if (firstLine === "date,description,category,amount_vnd") {
+    throw new Error("Đây là mẫu CSV cũ. Hãy tải tệp mẫu chi tiêu mới trên trang.");
+  }
+}
+
+$("import-form").addEventListener("change", () => { if (!state.pendingImport) clearImportPreview(); });
+$("import-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.pendingImport) return;
+  clearImportPreview();
+  const version = importPreviewVersion;
+  const file = event.currentTarget.elements.file.files[0];
+  if (!file) return;
+  const data = new FormData();
+  data.set("file", file);
+  $("preview-import").disabled = true;
+  try {
+    await checkExpenseFile(file);
+    const format = "SAMPLE_B";
+    const result = await json(`/expense-imports/preview?format=${encodeURIComponent(format)}`, { method: "POST", body: data });
+    if (version !== importPreviewVersion) return;
+    state.importPreview = { format, file, result };
+    renderImportPreview(result);
+    message("");
+  } catch (error) { if (version === importPreviewVersion) message(error.message, true); }
+  finally { $("preview-import").disabled = false; }
 });
+$("confirm-import").addEventListener("click", () => {
+  if (state.pendingImport || !state.importPreview?.result.canImport) return;
+  const { format, file } = state.importPreview;
+  if (file !== $("import-form").elements.file.files[0]) {
+    clearImportPreview();
+    message("Tệp đã thay đổi. Hãy xem trước lại.", true);
+    return;
+  }
+  state.pendingImport = { format, file, requestKey: crypto.randomUUID() };
+  $("confirm-import").hidden = true;
+  sendImport();
+});
+$("retry-import").addEventListener("click", sendImport);
 
 $("stats-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -284,19 +389,31 @@ $("stats-form").addEventListener("submit", async (event) => {
   } catch (error) { message(error.message, true); }
 });
 
+$("statement-scope").addEventListener("change", () => {
+  const paged = $("statement-scope").value === "page";
+  $("statement-page-field").hidden = !paged;
+  $("statement-form").elements.page.disabled = !paged;
+});
+
 $("statement-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
+  const paged = data.scope === "page";
+  delete data.scope;
+  if (paged) {
+    data.page = String(Number(data.page) - 1);
+    data.size = "500";
+  }
   try {
     const response = await request(`/statements?${new URLSearchParams(data)}`);
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `statement-${data.from}-${data.to}.${data.format}`;
+    link.download = `statement-${data.from}-${data.to}${paged ? `-page-${Number(data.page) + 1}` : ""}.${data.format}`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    message("Đã tải sao kê.");
+    message(paged ? `Đã tải phần ${Number(data.page) + 1}.${response.headers.get("X-Has-More") === "true" ? " Còn phần tiếp theo." : " Đây là phần cuối."}` : "Đã tải sao kê.");
   } catch (error) { message(error.message, true); }
 });
 
