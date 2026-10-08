@@ -38,6 +38,6 @@ Tài liệu này là đầu ra chặng 1 trước khi đổi schema và API. Ứ
 ## Thứ tự triển khai
 
 1. Chặng 2: đổi schema sang nhiều tài khoản trên một người dùng, vẫn chỉ mở Thanh toán; cập nhật API theo account ID và giữ tài khoản mặc định để giao diện hiện tại hoạt động.
-2. Chặng 3: Factory Method tạo tài khoản theo loại, Policy cho quy tắc giao dịch và hạ tầng bút toán phí.
+2. Chặng 3: Factory Method tạo tài khoản theo loại, Policy cho quy tắc giao dịch và hạ tầng bút toán phí. Phí Thanh toán bắt đầu từ ngày đầu tháng sau khi áp dụng biểu phí; việc tự động thu chỉ bật sau khi giao diện hiển thị rõ phí.
 3. Chặng 4: triển khai Tiết kiệm với bút toán lãi, phí rút trước hạn và kiểm thử kỳ hạn.
 4. Chặng 5: triển khai Tín dụng và phí thường niên, sau đó hoàn thiện giao diện, sao kê, đối soát và hướng dẫn.

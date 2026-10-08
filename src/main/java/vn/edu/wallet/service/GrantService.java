@@ -10,15 +10,18 @@ import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
 import vn.edu.wallet.api.RequestChecks;
+import vn.edu.wallet.account.AccountPolicies;
 
 @Service
 public class GrantService {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
+    private final AccountPolicies accountPolicies;
 
-    public GrantService(JdbcTemplate db, WalletQueries wallets) {
+    public GrantService(JdbcTemplate db, WalletQueries wallets, AccountPolicies accountPolicies) {
         this.db = db;
         this.wallets = wallets;
+        this.accountPolicies = accountPolicies;
     }
 
     @Transactional
@@ -59,6 +62,10 @@ public class GrantService {
         }
         long amount = RequestChecks.amount(input.amountDong());
         WalletQueries.WalletRow wallet = wallets.byCode(input.recipientWalletCode());
+        if (!"ACTIVE".equals(wallet.status())) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
+        }
+        accountPolicies.forType(wallet.accountType()).requireAdminGrant();
         long balance = wallets.lockBalance(wallet.id());
         long after;
         try {

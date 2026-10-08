@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
 import vn.edu.wallet.api.RequestChecks;
+import vn.edu.wallet.account.AccountPolicies;
 import vn.edu.wallet.core.Money;
 import vn.edu.wallet.core.TransferException;
 import vn.edu.wallet.core.TransferRequest;
@@ -30,11 +31,14 @@ public class TransferService {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
     private final TransferWriteHook hook;
+    private final AccountPolicies accountPolicies;
 
-    public TransferService(JdbcTemplate db, WalletQueries wallets, TransferWriteHook hook) {
+    public TransferService(JdbcTemplate db, WalletQueries wallets, TransferWriteHook hook,
+                           AccountPolicies accountPolicies) {
         this.db = db;
         this.wallets = wallets;
         this.hook = hook;
+        this.accountPolicies = accountPolicies;
     }
 
     @Transactional
@@ -43,6 +47,7 @@ public class TransferService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu mã yêu cầu");
         }
         WalletQueries.WalletRow sender = wallets.ownedBy(userId, input.sourceAccountId());
+        accountPolicies.forType(sender.accountType()).requireOutgoing();
         String lockKey = sender.id() + ":" + input.requestKey();
         // PostgreSQL transaction advisory lock serializes the same sender/requestKey,
         // including the interval before the first INSERT has committed.
@@ -67,6 +72,10 @@ public class TransferService {
         long amount = RequestChecks.amount(input.amountDong());
         String recipientCode = RequestChecks.walletCode(input.recipientWalletCode());
         WalletQueries.WalletRow recipient = wallets.byCode(recipientCode);
+        if (!"ACTIVE".equals(recipient.status())) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
+        }
+        accountPolicies.forType(recipient.accountType()).requireIncoming();
         if (sender.id().equals(recipient.id())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "SELF_TRANSFER", "Không thể chuyển tiền cho chính mình");
         }

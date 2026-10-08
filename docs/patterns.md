@@ -78,3 +78,9 @@ classDiagram
 ```
 
 **Luồng demo:** `GET /api/v1/expense-stats?from=2026-01-01&to=2026-12-31&groupBy=category` (hoặc `month`) → `ExpenseStatsController.view()` → `ExpenseStatisticsService.stats()` chọn `ByCategoryStrategy`/`ByMonthStrategy` → Strategy cung cấp biểu thức nhóm SQL cố định → PostgreSQL tính `SUM/COUNT` → Java sắp xếp key theo cùng thứ tự Unicode như trước. `aggregate()` giữ phép nhóm trong bộ nhớ làm tham chiếu kiểm thử tương đương. **Vì sao cần:** hai cách nhóm có thể thay thế qua giao diện; database chỉ trả các nhóm, không truyền mọi dòng chi tiêu về API. **Hỏi đáp:** “Đổi Strategy lúc nào?” — theo `groupBy` của request; kết quả không phụ thuộc định dạng CSV nguồn.
+
+## Mở rộng: Factory Method và Policy cho tài khoản
+
+`AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()` tạo cấu hình Thanh toán; các factory cho Tiết kiệm và Tín dụng sẽ được thêm khi triển khai sản phẩm đó. `AccountService` chọn factory theo `type`, nhưng không tự dựng các thuộc tính riêng của từng loại.
+
+`AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` hiện cho phép ba thao tác này. Loại chưa có policy trả `ACCOUNT_TYPE_UNAVAILABLE`, tránh vô tình dùng tài khoản Tiết kiệm hoặc Tín dụng như Thanh toán trước khi quy tắc tương ứng hoàn tất.

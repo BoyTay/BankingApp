@@ -23,20 +23,20 @@ public class WalletQueries {
                 ? "owner_id=? AND is_default=true AND account_status='ACTIVE'"
                 : "owner_id=? AND id=? AND account_status='ACTIVE'";
         Object[] args = accountId == null ? new Object[] {userId} : new Object[] {userId, accountId};
-        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong FROM wallets WHERE " + where,
+        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong,account_type,account_status FROM wallets WHERE " + where,
                 (rs, row) -> new WalletRow(rs.getObject("id", UUID.class),
                         rs.getObject("owner_id", UUID.class), rs.getString("wallet_code"),
-                        rs.getLong("balance_dong")), args);
+                        rs.getLong("balance_dong"), rs.getString("account_type"), rs.getString("account_status")), args);
         if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
         return rows.getFirst();
     }
 
     public WalletRow byCode(String input) {
         String code = RequestChecks.walletCode(input);
-        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong FROM wallets WHERE wallet_code=?",
+        List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong,account_type,account_status FROM wallets WHERE wallet_code=?",
                 (rs, row) -> new WalletRow(rs.getObject("id", UUID.class),
                         rs.getObject("owner_id", UUID.class), rs.getString("wallet_code"),
-                        rs.getLong("balance_dong")), code);
+                        rs.getLong("balance_dong"), rs.getString("account_type"), rs.getString("account_status")), code);
         if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
         return rows.getFirst();
     }
@@ -62,5 +62,6 @@ public class WalletQueries {
         return rows.getFirst();
     }
 
-    public record WalletRow(UUID id, UUID ownerId, String code, long balanceDong) {}
+    public record WalletRow(UUID id, UUID ownerId, String code, long balanceDong,
+                            String accountType, String status) {}
 }

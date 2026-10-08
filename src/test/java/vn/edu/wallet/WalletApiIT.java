@@ -10,6 +10,8 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +40,9 @@ import tools.jackson.databind.ObjectMapper;
 import vn.edu.wallet.service.TransferWriteHook;
 import vn.edu.wallet.auth.AuthService;
 import vn.edu.wallet.auth.AuthMaintenance;
+import vn.edu.wallet.service.AccountFeeService;
+import vn.edu.wallet.service.AccountService;
+import vn.edu.wallet.service.WalletQueries;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(WalletApiIT.FaultConfig.class)
@@ -49,6 +54,9 @@ class WalletApiIT {
     @Autowired JdbcTemplate db;
     @Autowired AuthService auth;
     @Autowired AuthMaintenance authMaintenance;
+    @Autowired AccountFeeService accountFees;
+    @Autowired AccountService accountService;
+    @Autowired WalletQueries walletQueries;
     @Value("${local.server.port}") int port;
 
     @DynamicPropertySource
@@ -121,6 +129,60 @@ class WalletApiIT {
         assertEquals(404, download(other, statementPath).statusCode());
         assertEquals(60, body(request("GET", "/me/accounts/" + secondaryId,
                 owner.token(), null)).path("balanceDong").longValue());
+    }
+
+    @Test
+    void checkingFeeIsDueUntilFundedAndPaidOnlyOnce() throws Exception {
+        Account owner = register("fee-owner");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        JsonNode account = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + key + "\",\"type\":\"CHECKING\"}"));
+        UUID id = UUID.fromString(account.path("accountId").asString());
+        String code = account.path("accountCode").asString();
+        LocalDate startsOn = db.queryForObject("SELECT fee_starts_on FROM wallets WHERE id=?",
+                (rs, row) -> rs.getDate(1).toLocalDate(), id);
+        assertEquals(LocalDate.now(ZoneOffset.UTC).withDayOfMonth(1).plusMonths(1), startsOn);
+        assertEquals(0, accountFees.assessAndCollect(startsOn.minusDays(1)).assessed());
+        assertTrue(accountFees.assessAndCollect(startsOn).assessed() >= 1);
+        JsonNode due = body(request("GET", "/me/accounts/" + id + "/fees", owner.token(), null));
+        assertEquals(1, due.size());
+        assertEquals("DUE", due.get(0).path("status").asString());
+        assertEquals(5000, due.get(0).path("amountDong").longValue());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + id + "/fees",
+                administrator.token(), null));
+        assertEquals(201, grantRaw(administrator, code, "6000", "fee funding",
+                UUID.randomUUID()).statusCode());
+        assertEquals(1, accountFees.assessAndCollect(startsOn).paid());
+        assertEquals(0, accountFees.assessAndCollect(startsOn).paid());
+        assertEquals(1000, body(request("GET", "/me/accounts/" + id,
+                owner.token(), null)).path("balanceDong").longValue());
+        assertEquals("PAID", body(request("GET", "/me/accounts/" + id + "/fees",
+                owner.token(), null)).get(0).path("status").asString());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM ledger_entries WHERE fee_id IS NOT NULL",
+                Integer.class));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void unsupportedAccountPolicyAndBadFeeSettingDoNotBlockLogin() throws Exception {
+        Account owner = register("policy-owner");
+        Account other = register("policy-other");
+        Account administrator = admin();
+        JsonNode account = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CHECKING\"}"));
+        UUID id = UUID.fromString(account.path("accountId").asString());
+        String code = account.path("accountCode").asString();
+        db.update("UPDATE wallets SET account_type='SAVINGS' WHERE id=?", id);
+        assertError(422, "ACCOUNT_TYPE_UNAVAILABLE", request("POST", "/transfers", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\"" + id
+                        + "\",\"recipientWalletCode\":\"" + other.walletCode() + "\",\"amountDong\":1}"));
+        assertError(422, "ACCOUNT_TYPE_UNAVAILABLE", grantRaw(administrator, code, "1",
+                "unsupported", UUID.randomUUID()));
+        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, "invalid");
+        assertFalse(badConfiguration.assessAndCollect(LocalDate.now(ZoneOffset.UTC)).ran());
+        assertEquals(200, request("GET", "/me/wallet", owner.token(), null).statusCode());
     }
 
     @Test

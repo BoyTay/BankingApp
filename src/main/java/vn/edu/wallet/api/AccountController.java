@@ -14,13 +14,18 @@ import org.springframework.web.bind.annotation.RestController;
 import vn.edu.wallet.auth.AuthInterceptor;
 import vn.edu.wallet.auth.Principal;
 import vn.edu.wallet.service.AccountService;
+import vn.edu.wallet.service.AccountFeeService;
 
 @RestController
 @RequestMapping("/api/v1/me/accounts")
 public class AccountController {
     private final AccountService accounts;
+    private final AccountFeeService fees;
 
-    public AccountController(AccountService accounts) { this.accounts = accounts; }
+    public AccountController(AccountService accounts, AccountFeeService fees) {
+        this.accounts = accounts;
+        this.fees = fees;
+    }
 
     @GetMapping
     public List<ApiDtos.AccountView> list(@RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal) {
@@ -31,6 +36,12 @@ public class AccountController {
     public ApiDtos.AccountView get(@RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,
                                    @PathVariable("id") UUID id) {
         return accounts.get(principal.userId(), id);
+    }
+
+    @GetMapping("/{id}/fees")
+    public List<ApiDtos.AccountFeeView> fees(@RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,
+                                             @PathVariable("id") UUID id) {
+        return fees.list(principal.userId(), id);
     }
 
     @PostMapping

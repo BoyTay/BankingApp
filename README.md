@@ -16,6 +16,8 @@ docker compose up --build -d
 
 Điền `DB_PASSWORD` trong `.env` trước khi chạy. Để tạo ADMIN ban đầu, điền cả `APP_BOOTSTRAP_ADMIN_EMAIL` và `APP_BOOTSTRAP_ADMIN_PASSWORD` (ít nhất 10 ký tự). Tài khoản này chỉ được tạo nếu email chưa tồn tại. Không commit `.env`.
 
+Biểu phí Thanh toán minh họa là 5.000 VND/tháng, bắt đầu từ tháng sau khi áp dụng. `ACCOUNT_FEES_ENABLED` mặc định `false` trong giai đoạn hoàn thiện giao diện phí; khi bật `true`, tác vụ UTC hằng ngày tạo khoản đến hạn, thu nếu đủ tiền và giữ `DUE` để thử lại nếu thiếu tiền. `CHECKING_MONTHLY_FEE_DONG` cho phép đổi mức phí cho các kỳ chưa được tạo; khoản đã tạo giữ nguyên mức cũ. Xem [quy tắc tài khoản và phí](docs/account-types.md).
+
 Mở [http://localhost:8080](http://localhost:8080) để dùng giao diện web. API ở `http://localhost:8080/api/v1`. Nếu cổng 8080 đã được sử dụng, đổi `API_PORT` trong `.env` rồi mở URL theo cổng mới. Compose chỉ công bố API trên máy đang chạy Docker.
 
 ```powershell

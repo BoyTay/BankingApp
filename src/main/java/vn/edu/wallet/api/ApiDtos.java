@@ -14,6 +14,8 @@ public final class ApiDtos {
     public record AccountCreate(UUID requestKey, String type) {}
     public record AccountView(UUID accountId, String accountCode, String accountType,
                               String status, boolean isDefault, long balanceDong) {}
+    public record AccountFeeView(UUID feeId, String feeCode, String periodStart,
+                                 long amountDong, String status, Instant paidAt) {}
     public record UserView(UUID userId, String email, String displayName, String role) {}
     public record RegisterView(UUID userId, String email, String displayName, String role, WalletView wallet) {}
     public record LoginView(String accessToken, String tokenType, Instant expiresAt, UserView user) {}

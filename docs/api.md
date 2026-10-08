@@ -52,6 +52,10 @@ Liệt kê hoặc xem một tài khoản thuộc người gọi. Mỗi phần t�
 
 Request: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"CHECKING"}`. Hiện chỉ mở thêm tài khoản Thanh toán; Tiết kiệm và Tín dụng sẽ được bật sau khi hoàn tất quy tắc phí và giao dịch. Tài khoản mới có số dư 0, không thay tài khoản mặc định. Mở mới trả `201`, gửi lại cùng `requestKey` trả `200` và cùng tài khoản. Thiếu trường trả `400 INVALID_REQUEST`; loại chưa hỗ trợ trả `400 ACCOUNT_TYPE_UNAVAILABLE`.
 
+### `GET /me/accounts/{id}/fees` — USER/ADMIN
+
+Liệt kê phí của tài khoản thuộc người gọi, mới nhất trước. Mỗi khoản có `feeId`, `feeCode`, `periodStart`, `amountDong`, `status` (`DUE` hoặc `PAID`) và `paidAt`. Tài khoản của người khác trả `404 ACCOUNT_NOT_FOUND`.
+
 ### `GET /wallets/lookup/{walletCode}` — USER/ADMIN
 
 Response `200`: `{"walletId":"9b292dd2-313f-44de-ac18-12419025d450","walletCode":"WLT9B292DD2313F44DEAC18","displayName":"Tran Binh"}`. Không trả email hoặc số dư người nhận. Lỗi: `404 WALLET_NOT_FOUND`.

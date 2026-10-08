@@ -1,20 +1,28 @@
 package vn.edu.wallet.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
-import vn.edu.wallet.core.WalletCodes;
+import vn.edu.wallet.account.AccountFactory;
+import vn.edu.wallet.account.AccountOpening;
 
 @Service
 public class AccountService {
     private final JdbcTemplate db;
+    private final Map<String, AccountFactory> factories;
 
-    public AccountService(JdbcTemplate db) { this.db = db; }
+    public AccountService(JdbcTemplate db, List<AccountFactory> factories) {
+        this.db = db;
+        this.factories = factories.stream().collect(Collectors.toUnmodifiableMap(AccountFactory::type, Function.identity()));
+    }
 
     public List<ApiDtos.AccountView> list(UUID userId) {
         return db.query("""
@@ -38,7 +46,8 @@ public class AccountService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu thông tin mở tài khoản");
         }
         String type = request.type().trim().toUpperCase(java.util.Locale.ROOT);
-        if (!"CHECKING".equals(type)) {
+        AccountFactory factory = factories.get(type);
+        if (factory == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "ACCOUNT_TYPE_UNAVAILABLE",
                     "Hiện chỉ hỗ trợ mở tài khoản thanh toán");
         }
@@ -47,12 +56,13 @@ public class AccountService {
         List<UUID> prior = db.query("SELECT id FROM wallets WHERE owner_id=? AND creation_request_key=?",
                 (rs, row) -> rs.getObject("id", UUID.class), userId, request.requestKey());
         if (!prior.isEmpty()) return new OpenResult(get(userId, prior.getFirst()), true);
-        UUID id = UUID.randomUUID();
+        AccountOpening opening = factory.create(userId, request.requestKey());
         db.update("""
-                INSERT INTO wallets(id,owner_id,wallet_code,account_type,is_default,creation_request_key)
-                VALUES (?,?,?,'CHECKING',false,?)
-                """, id, userId, WalletCodes.fromId(id), request.requestKey());
-        return new OpenResult(get(userId, id), false);
+                INSERT INTO wallets(id,owner_id,wallet_code,account_type,is_default,creation_request_key,fee_starts_on)
+                VALUES (?,?,?,?,false,?,?)
+                """, opening.id(), opening.ownerId(), opening.code(), opening.type(),
+                opening.requestKey(), java.sql.Date.valueOf(opening.feeStartsOn()));
+        return new OpenResult(get(userId, opening.id()), false);
     }
 
     private static ApiDtos.AccountView map(java.sql.ResultSet rs) throws java.sql.SQLException {
