@@ -1,8 +1,8 @@
-# REST API v1 — hợp đồng cho JavaFX
+# REST API v1 — hợp đồng cho giao diện web
 
 Base URL `http://localhost:8080/api/v1` khi phát triển; dùng HTTPS khi chạy qua mạng. JSON UTF-8. Mọi số tiền là **số nguyên VND** kiểu JSON integer, không dùng số thực hoặc chuỗi. `amountDong` hợp lệ trong `1..1000000000000`; số dư tối đa `9223372036854775807`. Thời gian ISO-8601 UTC. UUID và mã ví là chuỗi; mã ví do server sinh theo dạng `WLT` + 20 ký tự hex. Trường bắt buộc thiếu/sai kiểu trả `400 INVALID_REQUEST`, riêng số tiền sai kiểu/giới hạn trả `400 INVALID_AMOUNT`.
 
-Các endpoint cần đăng nhập dùng `Authorization: Bearer <accessToken>`. Token sống 8 giờ, đăng xuất thu hồi ngay. Desktop giữ token trong bộ nhớ. Mọi lỗi trả cùng cấu trúc:
+Các endpoint cần đăng nhập dùng `Authorization: Bearer <accessToken>`. Token sống 8 giờ, đăng xuất thu hồi ngay. Giao diện web giữ token trong bộ nhớ của tab và xóa khi đăng xuất hoặc tải lại trang. Mọi lỗi trả cùng cấu trúc:
 
 ```json
 {"code":"INSUFFICIENT_FUNDS","message":"Số dư không đủ","traceId":"6a4a9041-c591-470e-a360-dc4f5a1faac8"}
@@ -31,6 +31,8 @@ Request: `{"email":"an@example.test","password":"StrongPass123!"}`. Response `20
 ```
 
 Lỗi: `400 INVALID_REQUEST`, `401 INVALID_CREDENTIALS` (cùng thông điệp cho email/mật khẩu sai).
+
+Đăng nhập bị giới hạn 10 lần mỗi 60 giây theo địa chỉ kết nối và email; đăng ký bị giới hạn 20 lần mỗi 60 giây theo địa chỉ kết nối. Khi vượt giới hạn, API trả `429 RATE_LIMITED` kèm `Retry-After` (giây). Đăng nhập thành công xóa bộ đếm tương ứng. Xem [hướng dẫn vận hành](operations.md).
 
 ### `POST /auth/logout` — USER/ADMIN
 
@@ -111,11 +113,27 @@ Response `200` là **tệp nhị phân**, không phải JSON. Chỉ liệt kê c
 
 Lỗi: `400 INVALID_DATE_RANGE`, `400 INVALID_FORMAT`, `422 STATEMENT_TOO_LARGE`, `401 UNAUTHORIZED`.
 
+Với tập giao dịch lớn, truyền **cả hai** tham số `page` (bắt đầu từ 0, tối đa 1000) và `size` (`1..1000`), ví dụ `&page=0&size=500`. API xuất đúng phần được chọn theo thứ tự thời gian và mã giao dịch; response có `X-Page`, `X-Page-Size`, `X-Has-More`. Khi `X-Has-More=true`, tăng `page` để tải phần tiếp theo. Tên tệp thêm `-page-N`; tổng nhận/chuyển trong PDF là tổng **của phần đó**. Không truyền hai tham số này thì cách xuất cũ và giới hạn 10.000 giao dịch giữ nguyên. Tham số sai trả `400 INVALID_PAGE`.
+
+### `POST /expense-imports/preview?format=SAMPLE_A|SAMPLE_B`
+
+Giao diện web chỉ cung cấp [một tệp mẫu tiếng Việt](../samples/chi-tieu-mau.csv) và gửi `format=SAMPLE_B`. Mẫu mới dùng dấu phẩy, header `Ngày,Nội dung,Danh mục,Số tiền`, ngày `yyyy-MM-dd` và số tiền nguyên VND. `SAMPLE_A` cùng mẫu B dấu chấm phẩy cũ vẫn được API chấp nhận để tương thích với tệp đã có.
+
+Gửi `multipart/form-data` với phần `file` (CSV UTF-8, tối đa 1 MiB). Cần Bearer token; endpoint chỉ phân tích bằng Adapter tương ứng và **không ghi database**. Response `200` trả toàn bộ dòng hợp lệ và lỗi theo dòng để người dùng sửa tệp trước khi xác nhận:
+
+```json
+{"format":"SAMPLE_A","sourceName":"expenses.csv","rowCount":3,"validRows":[{"sourceRow":2,"spentOn":"2026-01-01","description":"Lunch","category":"Food","amountDong":12000}],"errors":[{"sourceRow":3,"code":"INVALID_CSV","message":"Dòng 3: ngày không hợp lệ"},{"sourceRow":4,"code":"INVALID_AMOUNT","message":"Dòng 4: số tiền không hợp lệ"}],"canImport":false}
+```
+
+Lỗi toàn tệp (UTF-8, header, cấu trúc, quá 5.000 dòng) nằm trong `errors` với `sourceRow` bằng `1` hoặc `null`. Chỉ bật xác nhận khi `canImport=true`. Chọn tệp hoặc định dạng khác phải xem trước lại. Lỗi tải lên quá 1 MiB trả `413 FILE_TOO_LARGE`.
+
 ### `POST /expense-imports?format=SAMPLE_A|SAMPLE_B`
 
 `Content-Type: multipart/form-data`; hai phần bắt buộc: `requestKey` là UUID và `file` là tệp CSV UTF-8. `requestKey` đại diện một lần nhập; retry cùng khóa + cùng nội dung trả batch cũ, cùng khóa + nội dung khác trả `409 IMPORT_KEY_CONFLICT`. Cùng tệp và cùng format được nhập lại bằng khóa khác cũng trả batch cũ, tránh đếm chi tiêu hai lần. Phạm vi chống trùng là **từng người dùng**.
 
-Tối đa 1 MiB và 5.000 dòng dữ liệu; tệp rỗng, header sai, UTF-8 lỗi hoặc một dòng sai đều từ chối **cả batch**, không lưu dòng nào. Ngày chi tiêu phải thuộc `2000-01-01..2100-12-31`; số tiền là VND dương `1..1000000000000`, không làm tròn. Format `SAMPLE_A` dùng header `date,description,category,amount_vnd`, ngày `yyyy-MM-dd`, tiền số nguyên hoặc phần thập phân đúng `.00`. Format `SAMPLE_B` dùng dấu `;`, header `Ngày GD;Nội dung;Nhóm;Số tiền`, ngày `dd/MM/yyyy`, tiền số nguyên có thể phân nhóm bằng dấu chấm và có thể kết thúc `,00`. Nội dung/mô tả 1–500 ký tự, danh mục 1–100 ký tự.
+Giao diện chỉ gọi endpoint này sau khi người dùng xem trước và bấm xác nhận. Nếu timeout hoặc lỗi 5xx khiến kết quả chưa rõ, nút thử lại gửi **cùng `requestKey`, format và tệp**; không tạo khóa mới.
+
+Tối đa 1 MiB và 5.000 dòng dữ liệu; tệp rỗng, header sai, UTF-8 lỗi hoặc một dòng sai đều từ chối **cả batch**, không lưu dòng nào. Ngày chi tiêu phải thuộc `2000-01-01..2100-12-31`; số tiền là VND dương `1..1000000000000`, không làm tròn. Format `SAMPLE_A` dùng header `date,description,category,amount_vnd`, ngày `yyyy-MM-dd`, tiền số nguyên hoặc phần thập phân đúng `.00`. Format `SAMPLE_B` nhận mẫu mới dấu phẩy nêu trên; tệp cũ có dấu `;`, header `Ngày GD;Nội dung;Nhóm;Số tiền`, ngày `dd/MM/yyyy`, tiền phân nhóm bằng dấu chấm và tùy chọn `,00` vẫn đọc được. Nội dung/mô tả 1–500 ký tự, danh mục 1–100 ký tự.
 
 Response `201` khi mới nhập, `200` khi trả batch cũ; body giống nhau:
 

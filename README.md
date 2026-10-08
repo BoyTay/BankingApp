@@ -1,8 +1,8 @@
 # Internal Wallet
 
-Ứng dụng ví điện tử nội bộ gồm giao diện web, REST API Spring Boot và PostgreSQL. Dự án có thêm ứng dụng desktop JavaFX trong `desktop/`.
+Ứng dụng ví điện tử nội bộ gồm giao diện web, REST API Java Spring Boot và PostgreSQL.
 
-Các chức năng chính: đăng ký/đăng nhập, xem ví và lịch sử, chuyển tiền, xuất sao kê CSV/PDF, nhập chi tiêu từ CSV, xem thống kê, cấp tiền và đối soát số dư bằng tài khoản ADMIN.
+Các chức năng chính: đăng ký/đăng nhập, xem ví và lịch sử, chuyển tiền, xuất sao kê CSV/PDF, xem trước và xác nhận nhập chi tiêu từ CSV, xem thống kê, cấp tiền và đối soát số dư bằng tài khoản ADMIN.
 
 ## Khởi chạy bằng Docker Compose
 
@@ -26,24 +26,16 @@ docker compose down
 
 `docker compose down` giữ lại dữ liệu PostgreSQL. Chỉ dùng `docker compose down -v` khi muốn xóa dữ liệu trong volume. Sau khi PostgreSQL đã khởi tạo, đổi `DB_PASSWORD` trong `.env` không tự đổi mật khẩu của tài khoản trong database.
 
-## Ứng dụng desktop (tùy chọn)
-
-Chạy API trước, sau đó dùng JDK 25 và Maven 3.9+:
-
-```powershell
-mvn -f desktop/pom.xml javafx:run
-```
-
-Desktop mặc định kết nối `http://localhost:8080/api/v1`. Nếu đã đổi `API_PORT`, đặt `WALLET_API_URL` thành URL API tương ứng hoặc sửa URL trên màn hình đăng nhập.
-
 ## Kiểm thử và tài liệu
 
 Với JDK 25 và Maven 3.9+, chạy unit tests bằng `mvn test`. Để chạy `WalletApiIT` với PostgreSQL tạm qua Testcontainers, bật Docker rồi chạy `mvn '-Dtest=WalletApiIT' test`. Integration test xóa dữ liệu trước mỗi ca kiểm thử, vì vậy chỉ dùng database dành riêng cho test.
 
-GitHub Actions chạy unit tests, integration tests với PostgreSQL tạm, kiểm thử desktop client và build Docker image trên mỗi lần push hoặc tạo/cập nhật pull request.
+GitHub Actions chạy unit tests, integration tests với PostgreSQL tạm và build Docker image trên mỗi lần push hoặc tạo/cập nhật pull request.
 
+- [Hướng dẫn sử dụng giao diện web](docs/huong-dan-su-dung.md)
 - [API](docs/api.md)
 - [Kiến trúc](docs/architecture.md)
 - [Design patterns](docs/patterns.md)
-- [Ảnh demo](docs/demo/README.md)
-- CSV mẫu: [định dạng A](samples/expenses-a.csv), [định dạng B](samples/expenses-b.csv)
+- [Vận hành, sao lưu và khôi phục](docs/operations.md)
+- [Đo hiệu năng thống kê và sao kê](docs/performance.md)
+- [Tệp mẫu nhập chi tiêu CSV](samples/chi-tieu-mau.csv)
