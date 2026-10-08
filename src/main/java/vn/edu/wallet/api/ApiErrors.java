@@ -2,6 +2,7 @@ package vn.edu.wallet.api;
 
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -20,7 +21,11 @@ public class ApiErrors {
     private static final Logger LOG = LoggerFactory.getLogger(ApiErrors.class);
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiDtos.ErrorView> known(ApiException ex) {
-        return ResponseEntity.status(ex.status()).body(new ApiDtos.ErrorView(ex.code(), ex.getMessage(), UUID.randomUUID()));
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.status());
+        if (ex.retryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, ex.retryAfterSeconds().toString());
+        }
+        return response.body(new ApiDtos.ErrorView(ex.code(), ex.getMessage(), UUID.randomUUID()));
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentNotValidException.class,
