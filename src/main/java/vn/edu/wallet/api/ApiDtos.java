@@ -24,6 +24,21 @@ public final class ApiDtos {
     public record SavingsWithdrawalView(UUID accountId, UUID requestKey, long principalDong,
                                         long interestDong, long feeDong, long payoutDong,
                                         boolean matured, UUID transferId, Instant closedAt) {}
+    public record CreditView(UUID accountId, String accountCode, String status,
+                             long limitDong, long debtDong, long availableDong) {}
+    public record CreditSpend(UUID requestKey, JsonNode amountDong, String description) {}
+    public record CreditSpendView(UUID chargeId, UUID requestKey, long amountDong,
+                                  String description, long debtAfterDong, Instant createdAt) {}
+    public record CreditRepay(UUID requestKey, UUID sourceAccountId, JsonNode amountDong) {}
+    public record CreditRepayView(UUID repaymentId, UUID requestKey, UUID sourceAccountId,
+                                  long amountDong, long debtAfterDong, Instant createdAt) {}
+    public record CreditLimitSet(UUID requestKey, JsonNode limitDong) {}
+    public record CreditLimitView(UUID changeId, UUID accountId, long limitDong,
+                                  long debtDong, Instant createdAt) {}
+    public record CreditActivityView(Instant createdAt, String type, long amountDong,
+                                     long debtAfterDong, String description) {}
+    public record AccountClose(UUID requestKey) {}
+    public record AccountCloseView(UUID accountId, String status, UUID requestKey, Instant closedAt) {}
     public record UserView(UUID userId, String email, String displayName, String role) {}
     public record RegisterView(UUID userId, String email, String displayName, String role, WalletView wallet) {}
     public record LoginView(String accessToken, String tokenType, Instant expiresAt, UserView user) {}

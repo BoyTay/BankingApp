@@ -51,4 +51,12 @@ public class AccountController {
         AccountService.OpenResult result = accounts.open(principal.userId(), request);
         return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED).body(result.account());
     }
+
+    @PostMapping("/{id}/close")
+    public ResponseEntity<ApiDtos.AccountCloseView> close(
+            @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,
+            @PathVariable("id") UUID id, @RequestBody ApiDtos.AccountClose request) {
+        AccountService.CloseResult result = accounts.close(principal.userId(), id, request);
+        return ResponseEntity.status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED).body(result.view());
+    }
 }

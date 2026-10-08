@@ -105,7 +105,7 @@ class WalletApiIT {
         assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + secondaryId,
                 other.token(), null));
         assertError(400, "ACCOUNT_TYPE_UNAVAILABLE", request("POST", "/me/accounts", owner.token(),
-                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}"));
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"UNKNOWN\"}"));
 
         assertEquals(201, grantRaw(administrator, secondaryCode, "100", "fund secondary",
                 UUID.randomUUID()).statusCode());
@@ -161,6 +161,61 @@ class WalletApiIT {
                 owner.token(), null)).get(0).path("status").asString());
         assertEquals(1, db.queryForObject("SELECT count(*) FROM ledger_entries WHERE fee_id IS NOT NULL",
                 Integer.class));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void creditLimitSpendRepayFeeAndCloseKeepLedgerConsistent() throws Exception {
+        Account owner = register("credit-owner");
+        Account other = register("credit-other");
+        Account administrator = admin();
+        JsonNode opened = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}"));
+        UUID id = UUID.fromString(opened.path("accountId").asString());
+        assertEquals(0, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("limitDong").longValue());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + id + "/credit",
+                other.token(), null));
+        String limit = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":100000}";
+        assertError(403, "FORBIDDEN", request("POST", "/admin/credit-accounts/" + id + "/limit",
+                owner.token(), limit));
+        assertEquals(201, request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), limit).statusCode());
+        assertEquals(200, request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), limit).statusCode());
+        String charge = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":60000,\"description\":\"Minh họa\"}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(), charge).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(), charge).statusCode());
+        assertError(422, "CREDIT_LIMIT_EXCEEDED", request("POST", "/me/accounts/" + id + "/credit/charges",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":50000,\"description\":\"Quá hạn mức\"}"));
+        assertError(422, "LIMIT_BELOW_DEBT", request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":50000}"));
+        grant(administrator, owner, 100000);
+        String repay = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\""
+                + wallet(owner).path("walletId").asString() + "\",\"amountDong\":60000}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repay).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repay).statusCode());
+        assertEquals(0, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("debtDong").longValue());
+        LocalDate startsOn = db.queryForObject("SELECT fee_starts_on FROM wallets WHERE id=?",
+                (rs, row) -> rs.getDate(1).toLocalDate(), id);
+        accountFees.assessAndCollect(startsOn);
+        JsonNode fee = body(request("GET", "/me/accounts/" + id + "/fees", owner.token(), null)).get(0);
+        assertEquals("CREDIT_ANNUAL", fee.path("feeCode").asString());
+        assertEquals("PAID", fee.path("status").asString());
+        assertEquals(20000, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("debtDong").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+        assertError(422, "ACCOUNT_NOT_EMPTY", request("POST", "/me/accounts/" + id + "/close",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\"}"));
+        String repayFee = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\""
+                + wallet(owner).path("walletId").asString() + "\",\"amountDong\":20000}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repayFee).statusCode());
+        String close = "{\"requestKey\":\"" + UUID.randomUUID() + "\"}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/close", owner.token(), close).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/close", owner.token(), close).statusCode());
         assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
                 .path("mismatchCount").longValue());
     }
@@ -286,7 +341,7 @@ class WalletApiIT {
                         + "\",\"recipientWalletCode\":\"" + other.walletCode() + "\",\"amountDong\":1}"));
         assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", grantRaw(administrator, code, "1",
                 "unsupported", UUID.randomUUID()));
-        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, "invalid");
+        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, "invalid", "invalid");
         assertFalse(badConfiguration.assessAndCollect(LocalDate.now(ZoneOffset.UTC)).ran());
         assertEquals(200, request("GET", "/me/wallet", owner.token(), null).statusCode());
     }

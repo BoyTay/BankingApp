@@ -1,6 +1,14 @@
 # Thiết kế mở rộng loại tài khoản
 
-Tài liệu này là đầu ra chặng 1 trước khi đổi schema và API. Ứng dụng hiện có đúng một ví cho mỗi người dùng: `wallets.owner_id` là duy nhất, số dư không âm, và các luồng chuyển tiền, sao kê, đối soát đều dựa trên giả định đó.
+Ứng dụng đã triển khai ba loại tài khoản qua Factory Method và Policy. Mỗi người dùng có một tài khoản Thanh toán mặc định và có thể mở thêm tài khoản. Dữ liệu giao dịch được giữ khi đóng tài khoản.
+
+## Trạng thái triển khai
+
+- **Thanh toán:** mở nhiều tài khoản, chuyển tiền từ tài khoản được chọn; phí 5.000 VND/tháng.
+- **Tiết kiệm:** gửi từ Thanh toán của chính mình, kỳ hạn 90 ngày với lãi minh họa 4%/năm; rút sớm mất phí 0,5% gốc.
+- **Tín dụng mô phỏng:** người dùng mở tài khoản với hạn mức 0; ADMIN cấp hạn mức; ghi khoản sử dụng và hoàn trả từ Thanh toán. Phí thường niên 20.000 VND, chưa tính lãi tín dụng.
+- Có thể đóng tài khoản Thanh toán phụ hoặc Tín dụng khi số dư/dư nợ bằng 0 và không còn phí đến hạn. Tài khoản mặc định và Tiết kiệm không đóng qua API này; Tiết kiệm dùng thao tác tất toán. Việc đóng giữ lịch sử.
+- Giao diện web hiển thị tài khoản, phí và hoạt động tín dụng. CSV/PDF trong mục Sao kê hiện chỉ chứa giao dịch chuyển tiền; phí và khoản tín dụng xem trong mục Tài khoản. Đối soát ADMIN tính mọi bút toán, gồm phí, lãi và tín dụng.
 
 ## Quy tắc chung đã xác định
 

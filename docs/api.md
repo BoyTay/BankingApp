@@ -174,3 +174,16 @@ Chỉ tổng hợp `imported_expenses` của các batch thuộc người gọi. 
 ```
 
 Ví dụ trên minh họa cấu trúc; response thực sắp xếp `key` theo thứ tự Unicode tăng dần. Tối đa 100.000 khoản chi trong một truy vấn. Lỗi: `400 INVALID_DATE_RANGE`, `400 INVALID_GROUP_BY`, `422 AGGREGATE_OVERFLOW`, `422 STATS_TOO_LARGE`, `401 UNAUTHORIZED`.
+# API tài khoản Tín dụng mô phỏng
+
+Tất cả đường dẫn dưới đây nằm dưới `/api/v1` và cần Bearer token. Các lệnh `POST` dùng UUID `requestKey`; thử lại cùng khóa và nội dung trả `200`, tạo mới trả `201`.
+
+- `POST /me/accounts` với `{ "requestKey": "UUID", "type": "CREDIT" }`: mở tài khoản hạn mức 0 VND.
+- `GET /me/accounts/{id}/credit`: hạn mức, dư nợ và hạn mức còn dùng.
+- `GET /me/accounts/{id}/credit/activity`: tối đa 100 khoản sử dụng, hoàn trả và phí gần nhất.
+- `POST /me/accounts/{id}/credit/charges` với `requestKey`, `amountDong`, `description`: ghi khoản sử dụng hạn mức.
+- `POST /me/accounts/{id}/credit/repayments` với `requestKey`, `sourceAccountId` (Thanh toán của chính chủ), `amountDong`: hoàn trả dư nợ.
+- `POST /admin/credit-accounts/{id}/limit` với `requestKey`, `limitDong`: ADMIN đặt hạn mức; không được thấp hơn dư nợ.
+- `POST /me/accounts/{id}/close` với `requestKey`: đóng Thanh toán phụ hoặc Tín dụng đã tất toán và hết phí đến hạn. Không xóa lịch sử.
+
+Phí thường niên 20.000 VND được ghi thành dư nợ khi đủ hạn mức. Nếu không đủ, khoản phí giữ trạng thái `DUE` và có thể xem ở `GET /me/accounts/{id}/fees`.

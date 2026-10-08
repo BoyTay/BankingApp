@@ -2,7 +2,7 @@
 
 const apiBase = "/api/v1";
 const $ = (id) => document.getElementById(id);
-const state = { token: null, user: null, wallet: null, page: 0, totalPages: 0, reconciliationPage: 0, pendingTransfer: null, pendingGrant: null, importPreview: null, pendingImport: null };
+const state = { token: null, user: null, wallet: null, accounts: [], selectedAccountId: null, page: 0, totalPages: 0, reconciliationPage: 0, pendingTransfer: null, pendingGrant: null, importPreview: null, pendingImport: null, pendingAccountAction: null };
 const money = (value) => new Intl.NumberFormat("vi-VN").format(value ?? 0);
 const dateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
@@ -67,6 +67,9 @@ function signOut(callApi = true) {
   state.token = null;
   state.user = null;
   state.wallet = null;
+  state.accounts = [];
+  state.selectedAccountId = null;
+  state.pendingAccountAction = null;
   state.pendingTransfer = null;
   state.pendingGrant = null;
   state.pendingImport = null;
@@ -91,6 +94,7 @@ function selectTab(name) {
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.hidden = panel.dataset.panel !== name);
   message("");
   if (name === "history") loadHistory().catch((error) => message(error.message, true));
+  if (name === "accounts") loadAccounts().catch((error) => message(error.message, true));
 }
 
 function cell(row, value, className = "") {
@@ -126,8 +130,10 @@ function renderTransfers(target, items, includeBalance) {
 
 async function refresh() {
   try {
-    const [wallet, recent] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=5")]);
+    const [wallet, recent, accounts] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=5"), json("/me/accounts")]);
     state.wallet = wallet;
+    state.accounts = accounts;
+    renderAccountSelectors();
     $("balance").textContent = money(wallet.balanceDong);
     $("wallet-code").textContent = wallet.walletCode;
     renderTransfers($("recent-body"), recent.items, false);
@@ -135,7 +141,8 @@ async function refresh() {
 }
 
 async function loadHistory() {
-  const data = await json(`/transfers?page=${state.page}&size=20`);
+  const accountId = $("history-account")?.value;
+  const data = await json(`/transfers?page=${state.page}&size=20${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ""}`);
   renderTransfers($("history-body"), data.items, true);
   state.totalPages = Math.ceil(data.totalItems / data.size);
   $("page-label").textContent = `Trang ${state.page + 1} / ${Math.max(state.totalPages, 1)}`;
@@ -230,7 +237,7 @@ $("transfer-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (state.pendingTransfer) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
   const data = formData(event.currentTarget);
-  const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong) };
+  const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong), sourceAccountId: data.sourceAccountId };
   if (!confirm(`Chuyển ${money(payload.amountDong)} ₫ đến ví ${payload.recipientWalletCode}?`)) return;
   pending("transfer", payload);
   sendMoney("transfer", payload);
@@ -423,3 +430,205 @@ for (const form of [$("stats-form"), $("statement-form")]) {
   form.elements.from.value = monthStart;
   form.elements.to.value = today;
 }
+
+const accountNames = { CHECKING: "Thanh toán", SAVINGS: "Tiết kiệm", CREDIT: "Tín dụng mô phỏng" };
+function addAccountSelect(form, id, label, name) {
+  const wrapper = document.createElement("label");
+  wrapper.textContent = label;
+  const select = document.createElement("select");
+  select.id = id;
+  select.name = name;
+  wrapper.append(select);
+  form.prepend(wrapper);
+  return select;
+}
+addAccountSelect($("transfer-form"), "transfer-source", "Tài khoản Thanh toán nguồn", "sourceAccountId");
+addAccountSelect($("statement-form"), "statement-account", "Tài khoản", "accountId");
+const historyLabel = document.createElement("label");
+historyLabel.className = "account-filter";
+historyLabel.textContent = "Tài khoản";
+const historySelect = document.createElement("select");
+historySelect.id = "history-account";
+historyLabel.append(historySelect);
+document.querySelector('[data-panel="history"]').prepend(historyLabel);
+
+function fillSelect(select, accounts, includeClosed = false) {
+  const previous = select.value;
+  select.replaceChildren();
+  for (const account of accounts) {
+    if (!includeClosed && account.status !== "ACTIVE") continue;
+    const option = document.createElement("option");
+    option.value = account.accountId;
+    option.textContent = `${accountNames[account.accountType]} · ${account.accountCode}${account.status === "CLOSED" ? " (đã đóng)" : ""}`;
+    select.append(option);
+  }
+  if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+}
+
+function renderAccountSelectors() {
+  const checking = state.accounts.filter((account) => account.accountType === "CHECKING");
+  fillSelect($("transfer-source"), checking);
+  fillSelect($("savings-funding"), checking);
+  fillSelect($("credit-repay-source"), checking);
+  fillSelect($("history-account"), state.accounts, true);
+  fillSelect($("statement-account"), state.accounts, true);
+  const selected = state.accounts.find((account) => account.accountId === state.selectedAccountId);
+  if (selected) renderAccountList();
+}
+
+function accountTerms() {
+  const type = $("account-open-type").value;
+  $("savings-open-fields").hidden = type !== "SAVINGS";
+  $("account-open-terms").textContent = {
+    CHECKING: "Phí duy trì 5.000 ₫/tháng, bắt đầu từ kỳ phí tiếp theo. Chỉ tài khoản Thanh toán được chuyển tiền.",
+    SAVINGS: "Gửi tối thiểu 100.000 ₫, kỳ hạn 90 ngày, lãi minh họa 4%/năm. Rút trước hạn mất phí 0,5% tiền gốc và không có lãi.",
+    CREDIT: "Hạn mức ban đầu 0 ₫; quản trị viên cấp hạn mức. Phí thường niên 20.000 ₫ từ kỳ phí đầu tiên. Tài khoản này chỉ ghi khoản sử dụng và hoàn trả, không chuyển tiền trực tiếp."
+  }[type];
+}
+$("account-open-type").addEventListener("change", accountTerms);
+accountTerms();
+
+function renderAccountList() {
+  const target = $("account-list");
+  target.replaceChildren();
+  for (const account of state.accounts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "account-tile";
+    button.setAttribute("aria-pressed", String(account.accountId === state.selectedAccountId));
+    const title = document.createElement("strong");
+    title.textContent = `${accountNames[account.accountType]}${account.isDefault ? " · mặc định" : ""}`;
+    const code = document.createElement("span");
+    code.textContent = account.accountCode;
+    const amount = document.createElement("b");
+    amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(-account.balanceDong) : money(account.balanceDong)} ₫`;
+    const status = document.createElement("small");
+    status.textContent = account.status === "ACTIVE" ? "Đang hoạt động" : "Đã đóng";
+    button.append(title, code, amount, status);
+    button.addEventListener("click", () => selectAccount(account.accountId).catch((error) => message(error.message, true)));
+    target.append(button);
+  }
+}
+
+async function loadAccounts() {
+  state.accounts = await json("/me/accounts");
+  renderAccountSelectors();
+  renderAccountList();
+  if (state.selectedAccountId) await selectAccount(state.selectedAccountId);
+}
+
+async function selectAccount(accountId) {
+  state.selectedAccountId = accountId;
+  renderAccountList();
+  const account = state.accounts.find((item) => item.accountId === accountId);
+  if (!account) return;
+  $("savings-withdraw-form").hidden = true;
+  $("credit-spend-form").hidden = true;
+  $("credit-repay-form").hidden = true;
+  $("close-account").hidden = account.isDefault || account.status !== "ACTIVE" || account.accountType === "SAVINGS";
+  $("credit-activity").replaceChildren();
+  let detail = `${accountNames[account.accountType]} · ${account.accountCode} · ${account.status === "ACTIVE" ? "đang hoạt động" : "đã đóng"}. `;
+  if (account.accountType === "SAVINGS") {
+    const savings = await json(`/me/accounts/${accountId}/savings`);
+    detail += `Gốc ${money(savings.principalDong)} ₫, đáo hạn ${savings.maturesOn}, lãi minh họa ${savings.annualRateBps / 100}%/năm.`;
+    $("savings-withdraw-form").hidden = account.status !== "ACTIVE";
+  } else if (account.accountType === "CREDIT") {
+    const [credit, activity] = await Promise.all([json(`/me/accounts/${accountId}/credit`), json(`/me/accounts/${accountId}/credit/activity`)]);
+    detail += `Hạn mức ${money(credit.limitDong)} ₫, dư nợ ${money(credit.debtDong)} ₫, còn dùng ${money(credit.availableDong)} ₫.`;
+    $("credit-spend-form").hidden = account.status !== "ACTIVE";
+    $("credit-repay-form").hidden = account.status !== "ACTIVE";
+    const heading = document.createElement("h3");
+    heading.textContent = "Hoạt động tín dụng gần đây";
+    $("credit-activity").append(heading);
+    for (const item of activity) {
+      const line = document.createElement("p");
+      line.textContent = `${dateTime(item.createdAt)} · ${item.type === "CHARGE" ? "Sử dụng" : item.type === "REPAYMENT" ? "Hoàn trả" : "Phí"} ${money(item.amountDong)} ₫ · dư nợ ${money(item.debtAfterDong)} ₫ · ${item.description}`;
+      $("credit-activity").append(line);
+    }
+  } else detail += `Số dư ${money(account.balanceDong)} ₫.`;
+  $("account-detail").textContent = detail;
+  const fees = await json(`/me/accounts/${accountId}/fees`);
+  $("account-fees").replaceChildren();
+  if (fees.length) {
+    const heading = document.createElement("h3");
+    heading.textContent = "Phí tài khoản";
+    $("account-fees").append(heading);
+    for (const fee of fees) {
+      const line = document.createElement("p");
+      line.textContent = `${fee.feeCode === "CHECKING_MONTHLY" ? "Duy trì tháng" : fee.feeCode === "CREDIT_ANNUAL" ? "Thường niên" : "Rút trước hạn"} ${fee.periodStart}: ${money(fee.amountDong)} ₫ · ${fee.status === "PAID" ? "đã thu" : "chưa thu"}`;
+      $("account-fees").append(line);
+    }
+  }
+}
+
+async function accountAction(path, payload, success) {
+  if (state.pendingAccountAction) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
+  state.pendingAccountAction = { path, payload, success };
+  await retryAccountAction();
+}
+async function retryAccountAction() {
+  const pending = state.pendingAccountAction;
+  if (!pending) return;
+  try {
+    await submitJson(pending.path, pending.payload);
+    state.pendingAccountAction = null;
+    $("retry-account-action").hidden = true;
+    message(pending.success);
+    await refresh();
+    if (document.querySelector('[data-tab="accounts"]').classList.contains("active")) await loadAccounts();
+  } catch (error) {
+    if (error.status && error.status < 500) state.pendingAccountAction = null;
+    $("retry-account-action").hidden = !state.pendingAccountAction;
+    message(error.message, true);
+  }
+}
+const retryAccountButton = document.createElement("button");
+retryAccountButton.id = "retry-account-action";
+retryAccountButton.type = "button";
+retryAccountButton.className = "secondary";
+retryAccountButton.textContent = "Thử lại yêu cầu tài khoản cũ";
+retryAccountButton.hidden = true;
+retryAccountButton.addEventListener("click", retryAccountAction);
+document.querySelector('[data-panel="accounts"]').append(retryAccountButton);
+
+$("account-open-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  const payload = { requestKey: crypto.randomUUID(), type: data.type };
+  if (data.type === "SAVINGS") { payload.fundingAccountId = data.fundingAccountId; payload.amountDong = Number(data.amountDong); }
+  if (!confirm(`Mở tài khoản ${accountNames[data.type]}? ${$("account-open-terms").textContent}`)) return;
+  await accountAction("/me/accounts", payload, "Đã mở tài khoản.");
+});
+$("savings-withdraw-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!confirm("Tất toán khoản tiết kiệm? Nếu trước hạn, phí là 0,5% tiền gốc và không hưởng lãi.")) return;
+  await accountAction(`/me/accounts/${state.selectedAccountId}/savings/withdraw`, { requestKey: crypto.randomUUID() }, "Đã tất toán tiết kiệm.");
+});
+$("credit-spend-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  const payload = { requestKey: crypto.randomUUID(), amountDong: Number(data.amountDong), description: data.description.trim() };
+  if (!confirm(`Ghi khoản sử dụng tín dụng ${money(payload.amountDong)} ₫?`)) return;
+  await accountAction(`/me/accounts/${state.selectedAccountId}/credit/charges`, payload, "Đã ghi khoản sử dụng hạn mức.");
+});
+$("credit-repay-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  const payload = { requestKey: crypto.randomUUID(), sourceAccountId: data.sourceAccountId, amountDong: Number(data.amountDong) };
+  if (!confirm(`Hoàn trả ${money(payload.amountDong)} ₫ từ tài khoản Thanh toán?`)) return;
+  await accountAction(`/me/accounts/${state.selectedAccountId}/credit/repayments`, payload, "Đã hoàn trả dư nợ.");
+});
+$("close-account").addEventListener("click", async () => {
+  if (!confirm("Đóng tài khoản đã tất toán? Tài khoản đã đóng không thể mở lại.")) return;
+  await accountAction(`/me/accounts/${state.selectedAccountId}/close`, { requestKey: crypto.randomUUID() }, "Đã đóng tài khoản.");
+});
+$("credit-limit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = formData(event.currentTarget);
+  if (!confirm(`Đặt hạn mức ${money(Number(data.limitDong))} ₫ cho tài khoản này?`)) return;
+  try {
+    await submitJson(`/admin/credit-accounts/${data.accountId.trim()}/limit`, { requestKey: crypto.randomUUID(), limitDong: Number(data.limitDong) });
+    message("Đã cập nhật hạn mức tín dụng.");
+  } catch (error) { message(error.message, true); }
+});
+$("history-account").addEventListener("change", () => { state.page = 0; loadHistory().catch((error) => message(error.message, true)); });

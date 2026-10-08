@@ -4,7 +4,7 @@
 
 Các chức năng chính: đăng ký/đăng nhập, xem ví và lịch sử, chuyển tiền, xuất sao kê CSV/PDF, xem trước và xác nhận nhập chi tiêu từ CSV, xem thống kê, cấp tiền và đối soát số dư bằng tài khoản ADMIN.
 
-API đã hỗ trợ nhiều tài khoản Thanh toán và Tiết kiệm kỳ hạn minh họa 90 ngày, lãi suất 4,00%/năm; rút sớm mất phí 0,5% tiền gốc. Giao diện web vẫn dùng tài khoản Thanh toán mặc định trong lúc màn hình quản lý nhiều tài khoản được hoàn thiện.
+Ứng dụng hỗ trợ nhiều tài khoản Thanh toán, Tiết kiệm và Tín dụng mô phỏng. Mỗi người dùng có một tài khoản Thanh toán mặc định. Vào **Tài khoản** để mở thêm, xem phí và thao tác theo loại. Tín dụng cần quản trị viên cấp hạn mức; đây là mô phỏng, không phải sản phẩm ngân hàng thực.
 
 ## Khởi chạy bằng Docker Compose
 
@@ -18,7 +18,7 @@ docker compose up --build -d
 
 Điền `DB_PASSWORD` trong `.env` trước khi chạy. Để tạo ADMIN ban đầu, điền cả `APP_BOOTSTRAP_ADMIN_EMAIL` và `APP_BOOTSTRAP_ADMIN_PASSWORD` (ít nhất 10 ký tự). Tài khoản này chỉ được tạo nếu email chưa tồn tại. Không commit `.env`.
 
-Biểu phí Thanh toán minh họa là 5.000 VND/tháng, bắt đầu từ tháng sau khi áp dụng. `ACCOUNT_FEES_ENABLED` mặc định `false` trong giai đoạn hoàn thiện giao diện phí; khi bật `true`, tác vụ UTC hằng ngày tạo khoản đến hạn, thu nếu đủ tiền và giữ `DUE` để thử lại nếu thiếu tiền. `CHECKING_MONTHLY_FEE_DONG` cho phép đổi mức phí cho các kỳ chưa được tạo; khoản đã tạo giữ nguyên mức cũ. Xem [quy tắc tài khoản và phí](docs/account-types.md).
+Biểu phí minh họa: Thanh toán 5.000 VND/tháng, Tiết kiệm rút sớm 0,5% tiền gốc, Tín dụng 20.000 VND/năm. Phí định kỳ bắt đầu từ kỳ phí tiếp theo. `ACCOUNT_FEES_ENABLED` mặc định `true`; tác vụ UTC hằng ngày tạo và thu phí đến hạn. Thiếu số dư Thanh toán hoặc hạn mức Tín dụng thì phí ở trạng thái `DUE` để thử lại; người dùng vẫn đăng nhập được. `CHECKING_MONTHLY_FEE_DONG` và `CREDIT_ANNUAL_FEE_DONG` thay đổi mức phí cho kỳ chưa được tạo. Xem [quy tắc tài khoản và phí](docs/account-types.md).
 
 Mở [http://localhost:8080](http://localhost:8080) để dùng giao diện web. API ở `http://localhost:8080/api/v1`. Nếu cổng 8080 đã được sử dụng, đổi `API_PORT` trong `.env` rồi mở URL theo cổng mới. Compose chỉ công bố API trên máy đang chạy Docker.
 

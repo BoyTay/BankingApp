@@ -3,6 +3,7 @@ package vn.edu.wallet.service;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
@@ -53,9 +54,10 @@ public class AccountService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "ACCOUNT_TYPE_UNAVAILABLE",
                     "Loại tài khoản chưa được hỗ trợ");
         }
-        if ("CHECKING".equals(type) && (request.fundingAccountId() != null || request.amountDong() != null)) {
+        if (("CHECKING".equals(type) || "CREDIT".equals(type))
+                && (request.fundingAccountId() != null || request.amountDong() != null)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "Tài khoản Thanh toán không cần tài khoản nguồn hoặc tiền gửi ban đầu");
+                    "Loại tài khoản này không cần tài khoản nguồn hoặc tiền gửi ban đầu");
         }
         db.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))",
                 userId + ":account-open:" + request.requestKey());
@@ -82,6 +84,42 @@ public class AccountService {
         return new OpenResult(get(userId, opening.id()), false);
     }
 
+    @Transactional
+    public CloseResult close(UUID userId, UUID accountId, ApiDtos.AccountClose request) {
+        if (request == null || request.requestKey() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu mã yêu cầu đóng tài khoản");
+        }
+        List<ApiDtos.AccountView> rows = db.query("""
+                SELECT id,wallet_code,account_type,account_status,is_default,balance_dong
+                FROM wallets WHERE id=? AND owner_id=? FOR UPDATE
+                """, (rs, row) -> map(rs), accountId, userId);
+        if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản");
+        ApiDtos.AccountView account = rows.getFirst();
+        List<ApiDtos.AccountCloseView> prior = db.query("""
+                SELECT wallet_id,request_key,closed_at FROM account_closures WHERE wallet_id=?
+                """, (rs, row) -> new ApiDtos.AccountCloseView(rs.getObject(1, UUID.class), "CLOSED",
+                rs.getObject(2, UUID.class), rs.getTimestamp(3).toInstant()), accountId);
+        if (!prior.isEmpty()) {
+            if (prior.getFirst().requestKey().equals(request.requestKey())) return new CloseResult(prior.getFirst(), true);
+            throw new ApiException(HttpStatus.CONFLICT, "ACCOUNT_ALREADY_CLOSED", "Tài khoản đã đóng");
+        }
+        if (!"ACTIVE".equals(account.status()) || account.isDefault() || "SAVINGS".equals(account.accountType())) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ACCOUNT_OPERATION_NOT_ALLOWED",
+                    "Không thể đóng tài khoản này");
+        }
+        Long due = db.queryForObject("SELECT count(*) FROM account_fees WHERE wallet_id=? AND status='DUE'",
+                Long.class, accountId);
+        if (account.balanceDong() != 0 || due != null && due > 0) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ACCOUNT_NOT_EMPTY",
+                    "Cần tất toán số dư, dư nợ và phí chưa thanh toán trước khi đóng");
+        }
+        db.update("UPDATE wallets SET account_status='CLOSED' WHERE id=?", accountId);
+        db.update("INSERT INTO account_closures(wallet_id,request_key) VALUES (?,?)", accountId, request.requestKey());
+        Instant at = db.queryForObject("SELECT closed_at FROM account_closures WHERE wallet_id=?",
+                (rs, row) -> rs.getTimestamp(1).toInstant(), accountId);
+        return new CloseResult(new ApiDtos.AccountCloseView(accountId, "CLOSED", request.requestKey(), at), false);
+    }
+
     private static ApiDtos.AccountView map(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new ApiDtos.AccountView(rs.getObject("id", UUID.class), rs.getString("wallet_code"),
                 rs.getString("account_type"), rs.getString("account_status"), rs.getBoolean("is_default"),
@@ -89,4 +127,5 @@ public class AccountService {
     }
 
     public record OpenResult(ApiDtos.AccountView account, boolean replayed) {}
+    public record CloseResult(ApiDtos.AccountCloseView view, boolean replayed) {}
 }
