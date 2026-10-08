@@ -4,6 +4,8 @@
 
 Các chức năng chính: đăng ký/đăng nhập, xem ví và lịch sử, chuyển tiền, xuất sao kê CSV/PDF, xem trước và xác nhận nhập chi tiêu từ CSV, xem thống kê, cấp tiền và đối soát số dư bằng tài khoản ADMIN.
 
+API đã hỗ trợ nhiều tài khoản Thanh toán và Tiết kiệm kỳ hạn minh họa 90 ngày, lãi suất 4,00%/năm; rút sớm mất phí 0,5% tiền gốc. Giao diện web vẫn dùng tài khoản Thanh toán mặc định trong lúc màn hình quản lý nhiều tài khoản được hoàn thiện.
+
 ## Khởi chạy bằng Docker Compose
 
 Cần Docker Desktop hoặc Docker Engine có Compose. Trong thư mục gốc dự án:

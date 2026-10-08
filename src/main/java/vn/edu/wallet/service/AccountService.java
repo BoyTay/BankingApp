@@ -18,10 +18,12 @@ import vn.edu.wallet.account.AccountOpening;
 public class AccountService {
     private final JdbcTemplate db;
     private final Map<String, AccountFactory> factories;
+    private final SavingsService savings;
 
-    public AccountService(JdbcTemplate db, List<AccountFactory> factories) {
+    public AccountService(JdbcTemplate db, List<AccountFactory> factories, SavingsService savings) {
         this.db = db;
         this.factories = factories.stream().collect(Collectors.toUnmodifiableMap(AccountFactory::type, Function.identity()));
+        this.savings = savings;
     }
 
     public List<ApiDtos.AccountView> list(UUID userId) {
@@ -49,19 +51,34 @@ public class AccountService {
         AccountFactory factory = factories.get(type);
         if (factory == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "ACCOUNT_TYPE_UNAVAILABLE",
-                    "Hiện chỉ hỗ trợ mở tài khoản thanh toán");
+                    "Loại tài khoản chưa được hỗ trợ");
+        }
+        if ("CHECKING".equals(type) && (request.fundingAccountId() != null || request.amountDong() != null)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Tài khoản Thanh toán không cần tài khoản nguồn hoặc tiền gửi ban đầu");
         }
         db.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))",
                 userId + ":account-open:" + request.requestKey());
         List<UUID> prior = db.query("SELECT id FROM wallets WHERE owner_id=? AND creation_request_key=?",
                 (rs, row) -> rs.getObject("id", UUID.class), userId, request.requestKey());
-        if (!prior.isEmpty()) return new OpenResult(get(userId, prior.getFirst()), true);
+        if (!prior.isEmpty()) {
+            ApiDtos.AccountView account = get(userId, prior.getFirst());
+            boolean same = account.accountType().equals(type)
+                    && (!"SAVINGS".equals(type) || savings.sameOpening(account.accountId(), request));
+            if (!same) throw new ApiException(HttpStatus.CONFLICT, "ACCOUNT_KEY_CONFLICT",
+                    "Mã yêu cầu đã được dùng để mở tài khoản khác");
+            return new OpenResult(account, true);
+        }
         AccountOpening opening = factory.create(userId, request.requestKey());
-        db.update("""
-                INSERT INTO wallets(id,owner_id,wallet_code,account_type,is_default,creation_request_key,fee_starts_on)
-                VALUES (?,?,?,?,false,?,?)
-                """, opening.id(), opening.ownerId(), opening.code(), opening.type(),
-                opening.requestKey(), java.sql.Date.valueOf(opening.feeStartsOn()));
+        if ("SAVINGS".equals(type)) {
+            savings.open(userId, opening, request);
+        } else {
+            db.update("""
+                    INSERT INTO wallets(id,owner_id,wallet_code,account_type,is_default,creation_request_key,fee_starts_on)
+                    VALUES (?,?,?,?,false,?,?)
+                    """, opening.id(), opening.ownerId(), opening.code(), opening.type(),
+                    opening.requestKey(), java.sql.Date.valueOf(opening.feeStartsOn()));
+        }
         return new OpenResult(get(userId, opening.id()), false);
     }
 

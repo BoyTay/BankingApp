@@ -50,11 +50,19 @@ Liệt kê hoặc xem một tài khoản thuộc người gọi. Mỗi phần t�
 
 ### `POST /me/accounts` — USER/ADMIN
 
-Request: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"CHECKING"}`. Hiện chỉ mở thêm tài khoản Thanh toán; Tiết kiệm và Tín dụng sẽ được bật sau khi hoàn tất quy tắc phí và giao dịch. Tài khoản mới có số dư 0, không thay tài khoản mặc định. Mở mới trả `201`, gửi lại cùng `requestKey` trả `200` và cùng tài khoản. Thiếu trường trả `400 INVALID_REQUEST`; loại chưa hỗ trợ trả `400 ACCOUNT_TYPE_UNAVAILABLE`.
+Mở thêm Thanh toán: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"CHECKING"}`. Tài khoản mới có số dư 0, không thay tài khoản mặc định. Mở mới trả `201`, gửi lại cùng `requestKey` và nội dung trả `200` với cùng tài khoản. Thiếu trường trả `400 INVALID_REQUEST`; dùng lại khóa cho loại/nội dung khác trả `409 ACCOUNT_KEY_CONFLICT`.
+
+Mở Tiết kiệm: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"SAVINGS","fundingAccountId":"759d6c81-fd08-46c1-8597-85ddd790bf7c","amountDong":200000}`. `fundingAccountId` phải là Thanh toán đang hoạt động của chính người gọi; tiền gửi tối thiểu 100.000 VND và được trừ, ghi bút toán cùng lúc tạo Tiết kiệm. Kỳ hạn minh họa 90 ngày, lãi suất năm 400 điểm cơ bản (4,00%); server cố định kỳ hạn/lãi suất vào khoản gửi lúc mở. Cấu hình sai trả `503 SAVINGS_PRODUCT_UNAVAILABLE` cho việc mở Tiết kiệm nhưng không chặn đăng nhập hoặc Thanh toán. Tín dụng chưa được mở qua API và trả `400 ACCOUNT_TYPE_UNAVAILABLE`.
 
 ### `GET /me/accounts/{id}/fees` — USER/ADMIN
 
 Liệt kê phí của tài khoản thuộc người gọi, mới nhất trước. Mỗi khoản có `feeId`, `feeCode`, `periodStart`, `amountDong`, `status` (`DUE` hoặc `PAID`) và `paidAt`. Tài khoản của người khác trả `404 ACCOUNT_NOT_FOUND`.
+
+### `GET /me/accounts/{id}/savings`, `POST /me/accounts/{id}/savings/withdraw` — USER/ADMIN
+
+`GET` trả tiền gốc, kỳ hạn, lãi suất cố định, ngày đáo hạn UTC, tài khoản Thanh toán nguồn, trạng thái và số dư. Chỉ chủ tài khoản được xem.
+
+`POST` nhận `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178"}` và **rút toàn bộ** về đúng tài khoản Thanh toán đã dùng khi mở. Trước ngày đáo hạn, không có lãi và phí là 0,5% tiền gốc, làm tròn tới VND gần nhất. Từ ngày đáo hạn, không mất phí; lãi = `tiền gốc × lãi suất năm (bps) × số ngày kỳ hạn / (10000 × 365)`, làm tròn tới VND gần nhất và chỉ được ghi lúc tất toán. Rút sau ngày đáo hạn không tăng thêm lãi. Phí/lãi có bút toán riêng, khoản chuyển về được ghi như một giao dịch giữa hai tài khoản; Tiết kiệm trở thành `CLOSED` với số dư 0. Rút mới trả `201`, thử lại cùng khóa trả `200` và cùng biên nhận; khóa khác sau khi tất toán trả `409 ACCOUNT_CLOSED`. Tài khoản không thuộc người gọi trả `404 ACCOUNT_NOT_FOUND`.
 
 ### `GET /wallets/lookup/{walletCode}` — USER/ADMIN
 

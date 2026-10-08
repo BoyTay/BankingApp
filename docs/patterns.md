@@ -81,6 +81,6 @@ classDiagram
 
 ## Mở rộng: Factory Method và Policy cho tài khoản
 
-`AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()` tạo cấu hình Thanh toán; các factory cho Tiết kiệm và Tín dụng sẽ được thêm khi triển khai sản phẩm đó. `AccountService` chọn factory theo `type`, nhưng không tự dựng các thuộc tính riêng của từng loại.
+`AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()` và `SavingsAccountFactory.build()` tạo cấu hình theo loại; factory cho Tín dụng sẽ được thêm ở chặng sau. `AccountService` chọn factory theo `type`; `SavingsService` bổ sung tiền gốc, kỳ hạn và lãi suất cố định cho khoản gửi.
 
-`AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` hiện cho phép ba thao tác này. Loại chưa có policy trả `ACCOUNT_TYPE_UNAVAILABLE`, tránh vô tình dùng tài khoản Tiết kiệm hoặc Tín dụng như Thanh toán trước khi quy tắc tương ứng hoàn tất.
+`AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` cho phép ba thao tác này, còn `SavingsAccountPolicy` từ chối để tiền gửi chỉ đi qua quy trình mở/tất toán có phí và lãi rõ ràng. Tín dụng chưa có factory/policy nên chưa thể mở hoặc dùng để giao dịch.

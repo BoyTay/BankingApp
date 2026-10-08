@@ -11,11 +11,19 @@ public final class ApiDtos {
     public record RegisterRequest(String email, String displayName, String password) {}
     public record LoginRequest(String email, String password) {}
     public record WalletView(UUID walletId, String walletCode, long balanceDong) {}
-    public record AccountCreate(UUID requestKey, String type) {}
+    public record AccountCreate(UUID requestKey, String type, UUID fundingAccountId,
+                                JsonNode amountDong) {}
     public record AccountView(UUID accountId, String accountCode, String accountType,
                               String status, boolean isDefault, long balanceDong) {}
     public record AccountFeeView(UUID feeId, String feeCode, String periodStart,
                                  long amountDong, String status, Instant paidAt) {}
+    public record SavingsView(UUID accountId, UUID fundingAccountId, long principalDong,
+                              int termDays, int annualRateBps, String maturesOn,
+                              String status, long balanceDong) {}
+    public record SavingsWithdraw(UUID requestKey) {}
+    public record SavingsWithdrawalView(UUID accountId, UUID requestKey, long principalDong,
+                                        long interestDong, long feeDong, long payoutDong,
+                                        boolean matured, UUID transferId, Instant closedAt) {}
     public record UserView(UUID userId, String email, String displayName, String role) {}
     public record RegisterView(UUID userId, String email, String displayName, String role, WalletView wallet) {}
     public record LoginView(String accessToken, String tokenType, Instant expiresAt, UserView user) {}

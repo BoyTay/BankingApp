@@ -47,6 +47,9 @@ public class TransferService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu mã yêu cầu");
         }
         WalletQueries.WalletRow sender = wallets.ownedBy(userId, input.sourceAccountId());
+        if (!"ACTIVE".equals(sender.status())) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "WALLET_NOT_FOUND", "Không tìm thấy ví");
+        }
         accountPolicies.forType(sender.accountType()).requireOutgoing();
         String lockKey = sender.id() + ":" + input.requestKey();
         // PostgreSQL transaction advisory lock serializes the same sender/requestKey,

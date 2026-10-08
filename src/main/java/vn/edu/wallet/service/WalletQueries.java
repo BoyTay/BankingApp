@@ -21,7 +21,7 @@ public class WalletQueries {
     public WalletRow ownedBy(UUID userId, UUID accountId) {
         String where = accountId == null
                 ? "owner_id=? AND is_default=true AND account_status='ACTIVE'"
-                : "owner_id=? AND id=? AND account_status='ACTIVE'";
+                : "owner_id=? AND id=?";
         Object[] args = accountId == null ? new Object[] {userId} : new Object[] {userId, accountId};
         List<WalletRow> rows = db.query("SELECT id,owner_id,wallet_code,balance_dong,account_type,account_status FROM wallets WHERE " + where,
                 (rs, row) -> new WalletRow(rs.getObject("id", UUID.class),
