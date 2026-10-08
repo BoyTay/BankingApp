@@ -4,8 +4,8 @@
 
 - Đơn vị: VND nguyên đồng; lưu `BIGINT`/`long`. Không nhận phần lẻ, không làm tròn ngầm. CSV có phần thập phân khác 0 sẽ bị từ chối; giá trị `.00` được chấp nhận sau khi kiểm tra chính xác.
 - Thời gian lưu UTC (`timestamptz`), hiển thị theo múi giờ máy người dùng.
-- Một tài khoản có một ví. Mã ví là chuỗi công khai, sinh ở server và bất biến. Email đăng nhập là duy nhất sau chuẩn hóa chữ thường.
-- Đăng ký luôn tạo role `USER` và ví có số dư 0. Tài khoản `ADMIN` được cấp qua quy trình cấu hình/seed an toàn riêng, không qua API đăng ký.
+- Một người dùng có một tài khoản Thanh toán mặc định và có thể mở thêm tài khoản. Mỗi tài khoản có mã công khai riêng, sinh ở server và bất biến. Email đăng nhập là duy nhất sau chuẩn hóa chữ thường.
+- Đăng ký luôn tạo role `USER` và tài khoản Thanh toán mặc định có số dư 0. Tài khoản `ADMIN` được cấp qua quy trình cấu hình/seed an toàn riêng, không qua API đăng ký.
 - Mật khẩu băm bằng BCrypt; phiên xác thực qua token ngắn hạn. Chỉ hash của token lưu ở `auth_sessions` để có thể thu hồi khi đăng xuất. Token thô chỉ ở bộ nhớ của tab web, không ghi log hoặc lưu vào Git.
 
 ## Thành phần
@@ -26,7 +26,7 @@ Giao diện web không chứa thông tin kết nối PostgreSQL. Server kiểm t
 2. UI hiển thị màn hình xác nhận. Khi người dùng xác nhận, UI sinh một UUID `requestKey`; nếu retry do timeout thì giữ nguyên UUID.
 3. Server xác thực người gửi, bắt đầu transaction PostgreSQL và lấy `pg_advisory_xact_lock` theo `(sender_wallet_id, request_key)`. Khóa này bao phủ cả khoảng thời gian trước `INSERT`, khi unique constraint chưa nhìn thấy giao dịch của request khác.
 4. Sau khi lấy khóa, nếu đã có giao dịch cùng khóa, so sánh mã người nhận và số tiền: trùng khớp trả biên nhận cũ, khác nội dung trả `409`. Unique constraint `(sender_wallet_id, request_key)` vẫn là lớp bảo vệ cuối ở database.
-5. Khóa hai dòng ví theo UUID tăng dần (`SELECT ... FOR UPDATE`) để tránh deadlock, rồi kiểm tra số tiền dương, khác ví và đủ số dư.
+5. `AccountPolicy` kiểm tra loại tài khoản nguồn/đích có được chuyển tiền hay không. Khóa hai dòng ví theo UUID tăng dần (`SELECT ... FOR UPDATE`) để tránh deadlock, rồi kiểm tra số tiền dương, khác ví và đủ số dư.
 6. Cập nhật hai số dư, ghi `transfers` và hai `ledger_entries` trong cùng transaction; commit xong mới trả biên nhận. Mọi lỗi rollback tất cả.
 
 `TransferRules` giữ quy tắc thuần từ mốc 1. `TransferService` bao giao dịch bằng `@Transactional`, lấy advisory lock và khóa dòng ví theo thứ tự UUID. `WalletApiIT` kiểm tra thật trên PostgreSQL, gồm cạnh tranh số dư, request trùng và rollback sau lỗi giả lập.
@@ -36,6 +36,10 @@ ADMIN có thể gọi `GET /api/v1/admin/reconciliation` để đối chiếu s�
 ## Dữ liệu và ranh giới
 
 `wallets.balance_dong` là số dư hiện tại; `ledger_entries` là dấu vết biến động. `transfers` có một dòng mỗi lần chuyển và hai bút toán đối ứng. `admin_grants` ghi người cấp, `request_key`, lý do, số tiền và bút toán tăng ví. `GrantService` khóa theo `(admin_user_id, request_key)` trước khi đọc/ghi, còn unique constraint bảo vệ ở database; cùng khóa và nội dung trả lại biên nhận cũ. `imported_expenses` chỉ liên kết `import_batches`, không có `wallet_id` và không được gọi service cập nhật ví.
+
+`AccountFactory` tạo cấu hình ban đầu theo loại tài khoản; hiện có `CheckingAccountFactory` và `SavingsAccountFactory`. `AccountPolicy` quyết định loại nào được chuyển/nhận tiền hoặc nhận cấp tiền trực tiếp; Tiết kiệm chỉ dùng luồng mở/tất toán riêng, còn Tín dụng chưa được mở. Phí Thanh toán dùng `account_fees` để lưu khoản đến hạn theo tháng. Khi đủ tiền, tác vụ cập nhật số dư, ghi `ledger_entries.fee_id` và đánh dấu đã thu trong cùng transaction; khi thiếu tiền, khoản phí giữ trạng thái `DUE`. Ràng buộc duy nhất theo `(wallet_id, fee_code, period_start)` và trên `ledger_entries.fee_id` chống thu trùng. Tác vụ tự động mặc định tắt cho đến khi giao diện hiển thị phí.
+
+`SavingsAccountFactory` tạo Tiết kiệm và `SavingsAccountPolicy` chặn chuyển/nhận tiền hoặc cấp tiền trực tiếp. `SavingsService` chuyển tiền gửi từ Thanh toán cùng chủ khi mở và chuyển toàn bộ về đúng tài khoản đó khi tất toán. Bảng `savings_accounts` cố định gốc, kỳ hạn, lãi suất và biên nhận tất toán. Phí rút sớm nằm trong `account_fees`; lãi đáo hạn nằm trong `savings_interest`; mỗi khoản có bút toán nguồn riêng. Khóa dòng Tiết kiệm và hai ví trong transaction khiến thử lại hoặc hai lần rút đồng thời chỉ tất toán một lần.
 
 ## Giao diện web
 

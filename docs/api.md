@@ -42,6 +42,28 @@ Không có body. Response `204` không có body. Gọi lại bằng token đã t
 
 Response `200`: `{"walletId":"759d6c81-fd08-46c1-8597-85ddd790bf7c","walletCode":"WLT759D6C81FD0846C18597","balanceDong":0}`.
 
+Endpoint tương thích giao diện hiện tại, luôn trả tài khoản Thanh toán mặc định.
+
+### `GET /me/accounts`, `GET /me/accounts/{id}` — USER/ADMIN
+
+Liệt kê hoặc xem một tài khoản thuộc người gọi. Mỗi phần tử có `accountId`, `accountCode`, `accountType`, `status`, `isDefault`, `balanceDong`. Tài khoản của người khác trả `404 ACCOUNT_NOT_FOUND`.
+
+### `POST /me/accounts` — USER/ADMIN
+
+Mở thêm Thanh toán: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"CHECKING"}`. Tài khoản mới có số dư 0, không thay tài khoản mặc định. Mở mới trả `201`, gửi lại cùng `requestKey` và nội dung trả `200` với cùng tài khoản. Thiếu trường trả `400 INVALID_REQUEST`; dùng lại khóa cho loại/nội dung khác trả `409 ACCOUNT_KEY_CONFLICT`.
+
+Mở Tiết kiệm: `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","type":"SAVINGS","fundingAccountId":"759d6c81-fd08-46c1-8597-85ddd790bf7c","amountDong":200000}`. `fundingAccountId` phải là Thanh toán đang hoạt động của chính người gọi; tiền gửi tối thiểu 100.000 VND và được trừ, ghi bút toán cùng lúc tạo Tiết kiệm. Kỳ hạn minh họa 90 ngày, lãi suất năm 400 điểm cơ bản (4,00%); server cố định kỳ hạn/lãi suất vào khoản gửi lúc mở. Cấu hình sai trả `503 SAVINGS_PRODUCT_UNAVAILABLE` cho việc mở Tiết kiệm nhưng không chặn đăng nhập hoặc Thanh toán. Tín dụng chưa được mở qua API và trả `400 ACCOUNT_TYPE_UNAVAILABLE`.
+
+### `GET /me/accounts/{id}/fees` — USER/ADMIN
+
+Liệt kê phí của tài khoản thuộc người gọi, mới nhất trước. Mỗi khoản có `feeId`, `feeCode`, `periodStart`, `amountDong`, `status` (`DUE` hoặc `PAID`) và `paidAt`. Tài khoản của người khác trả `404 ACCOUNT_NOT_FOUND`.
+
+### `GET /me/accounts/{id}/savings`, `POST /me/accounts/{id}/savings/withdraw` — USER/ADMIN
+
+`GET` trả tiền gốc, kỳ hạn, lãi suất cố định, ngày đáo hạn UTC, tài khoản Thanh toán nguồn, trạng thái và số dư. Chỉ chủ tài khoản được xem.
+
+`POST` nhận `{"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178"}` và **rút toàn bộ** về đúng tài khoản Thanh toán đã dùng khi mở. Trước ngày đáo hạn, không có lãi và phí là 0,5% tiền gốc, làm tròn tới VND gần nhất. Từ ngày đáo hạn, không mất phí; lãi = `tiền gốc × lãi suất năm (bps) × số ngày kỳ hạn / (10000 × 365)`, làm tròn tới VND gần nhất và chỉ được ghi lúc tất toán. Rút sau ngày đáo hạn không tăng thêm lãi. Phí/lãi có bút toán riêng, khoản chuyển về được ghi như một giao dịch giữa hai tài khoản; Tiết kiệm trở thành `CLOSED` với số dư 0. Rút mới trả `201`, thử lại cùng khóa trả `200` và cùng biên nhận; khóa khác sau khi tất toán trả `409 ACCOUNT_CLOSED`. Tài khoản không thuộc người gọi trả `404 ACCOUNT_NOT_FOUND`.
+
 ### `GET /wallets/lookup/{walletCode}` — USER/ADMIN
 
 Response `200`: `{"walletId":"9b292dd2-313f-44de-ac18-12419025d450","walletCode":"WLT9B292DD2313F44DEAC18","displayName":"Tran Binh"}`. Không trả email hoặc số dư người nhận. Lỗi: `404 WALLET_NOT_FOUND`.
@@ -56,7 +78,7 @@ UI sinh một `requestKey` UUID khi người dùng xác nhận; retry do timeout
 {"requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001}
 ```
 
-Giao dịch mới trả `201`; retry giống hệt trả `200` với **cùng body** biên nhận. Ví nguồn lấy từ token, client không được chọn. Response:
+Giao dịch mới trả `201`; retry giống hệt trả `200` với **cùng body** biên nhận. Có thể truyền thêm `sourceAccountId` để chọn tài khoản Thanh toán nguồn thuộc người gọi; bỏ qua trường này thì dùng tài khoản mặc định. Response:
 
 ```json
 {"transferId":"6bc7b1af-3e67-4c8c-bbb7-8edf74543045","requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","senderWalletCode":"WLT759D6C81FD0846C18597","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001,"direction":"OUTGOING","myBalanceAfterDong":874999,"createdAt":"2026-10-07T05:00:00Z"}
@@ -70,7 +92,7 @@ Response `200`: cùng schema biên nhận ở trên. `direction` và `myBalanceA
 
 ### `GET /transfers?page=0&size=20` — USER/ADMIN
 
-`page` từ 0; `size` từ 1 đến 100, mặc định 20. Sắp xếp `createdAt DESC, transferId DESC`. Chỉ giao dịch mà ví hiện tại là nguồn hoặc đích. Response `200`:
+`page` từ 0; `size` từ 1 đến 100, mặc định 20. Có thể thêm `accountId` để xem lịch sử một tài khoản thuộc người gọi; thiếu thì dùng tài khoản mặc định. Sắp xếp `createdAt DESC, transferId DESC`. Chỉ giao dịch mà tài khoản đã chọn là nguồn hoặc đích. Response `200`:
 
 ```json
 {"items":[{"transferId":"6bc7b1af-3e67-4c8c-bbb7-8edf74543045","requestKey":"d287954d-fb6d-44cd-a9c6-3d99d2141178","senderWalletCode":"WLT759D6C81FD0846C18597","recipientWalletCode":"WLT9B292DD2313F44DEAC18","amountDong":125001,"direction":"OUTGOING","myBalanceAfterDong":874999,"createdAt":"2026-10-07T05:00:00Z"}],"page":0,"size":20,"totalItems":1}
@@ -106,7 +128,7 @@ Mọi endpoint dưới đây yêu cầu `Authorization: Bearer <accessToken>` v�
 
 ### `GET /statements?from=2026-01-01&to=2026-01-31&format=csv|pdf`
 
-Response `200` là **tệp nhị phân**, không phải JSON. Chỉ liệt kê các `transfers` của ví người gọi trong khoảng ngày; cấp tiền quản trị và chi tiêu CSV không nằm trong sao kê chuyển tiền. Dòng giao dịch có thời điểm UTC, mã giao dịch, chiều `OUTGOING`/`INCOMING`, mã ví đối ứng, số tiền VND nguyên đồng và **số dư sau của chính ví người gọi**. Kể cả PDF/CSV cũng không chứa số dư của ví đối ứng. Tối đa 10.000 giao dịch trong một lần xuất; vượt mức trả `422 STATEMENT_TOO_LARGE`.
+Response `200` là **tệp nhị phân**, không phải JSON. Có thể thêm `accountId` để xuất sao kê một tài khoản thuộc người gọi; thiếu thì dùng tài khoản mặc định. Chỉ liệt kê các `transfers` của tài khoản đã chọn trong khoảng ngày; cấp tiền quản trị và chi tiêu CSV không nằm trong sao kê chuyển tiền. Dòng giao dịch có thời điểm UTC, mã giao dịch, chiều `OUTGOING`/`INCOMING`, mã ví đối ứng, số tiền VND nguyên đồng và **số dư sau của chính tài khoản người gọi**. Kể cả PDF/CSV cũng không chứa số dư của tài khoản đối ứng. Tối đa 10.000 giao dịch trong một lần xuất; vượt mức trả `422 STATEMENT_TOO_LARGE`.
 
 - `format=csv`: `Content-Type: text/csv; charset=UTF-8`; `Content-Disposition: attachment; filename="statement-20260101-20260131.csv"`. Nội dung UTF-8 có BOM để Excel Windows nhận tiếng Việt; header là `Thời gian UTC,Mã giao dịch,Loại,Ví đối ứng,Số tiền (VND),Số dư sau (VND)`.
 - `format=pdf`: `Content-Type: application/pdf`; `Content-Disposition: attachment; filename="statement-20260101-20260131.pdf"`. PDF nhúng font Unicode và có tiêu đề, mã ví, khoảng ngày, các dòng giao dịch cùng tổng tiền vào/ra.
@@ -152,3 +174,16 @@ Chỉ tổng hợp `imported_expenses` của các batch thuộc người gọi. 
 ```
 
 Ví dụ trên minh họa cấu trúc; response thực sắp xếp `key` theo thứ tự Unicode tăng dần. Tối đa 100.000 khoản chi trong một truy vấn. Lỗi: `400 INVALID_DATE_RANGE`, `400 INVALID_GROUP_BY`, `422 AGGREGATE_OVERFLOW`, `422 STATS_TOO_LARGE`, `401 UNAUTHORIZED`.
+# API tài khoản Tín dụng mô phỏng
+
+Tất cả đường dẫn dưới đây nằm dưới `/api/v1` và cần Bearer token. Các lệnh `POST` dùng UUID `requestKey`; thử lại cùng khóa và nội dung trả `200`, tạo mới trả `201`.
+
+- `POST /me/accounts` với `{ "requestKey": "UUID", "type": "CREDIT" }`: mở tài khoản hạn mức 0 VND.
+- `GET /me/accounts/{id}/credit`: hạn mức, dư nợ và hạn mức còn dùng.
+- `GET /me/accounts/{id}/credit/activity`: tối đa 100 khoản sử dụng, hoàn trả và phí gần nhất.
+- `POST /me/accounts/{id}/credit/charges` với `requestKey`, `amountDong`, `description`: ghi khoản sử dụng hạn mức.
+- `POST /me/accounts/{id}/credit/repayments` với `requestKey`, `sourceAccountId` (Thanh toán của chính chủ), `amountDong`: hoàn trả dư nợ.
+- `POST /admin/credit-accounts/{id}/limit` với `requestKey`, `limitDong`: ADMIN đặt hạn mức; không được thấp hơn dư nợ.
+- `POST /me/accounts/{id}/close` với `requestKey`: đóng Thanh toán phụ hoặc Tín dụng đã tất toán và hết phí đến hạn. Không xóa lịch sử.
+
+Phí thường niên 20.000 VND được ghi thành dư nợ khi đủ hạn mức. Nếu không đủ, khoản phí giữ trạng thái `DUE` và có thể xem ở `GET /me/accounts/{id}/fees`.

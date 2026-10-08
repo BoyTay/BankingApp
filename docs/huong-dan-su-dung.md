@@ -73,3 +73,12 @@ Nếu tài khoản có quyền quản trị, tab **Quản trị** cho phép:
 - **Có dòng lỗi khi xem trước:** sửa các dòng được nêu rồi xem trước lại. Chưa có dòng nào được lưu khi tệp còn lỗi.
 - **Không thấy khoản chi trong Lịch sử hoặc Sao kê:** đây là hành vi đúng. Khoản chi nhập CSV chỉ xuất hiện trong **Thống kê chi tiêu**.
 - **Trang không mở được:** kiểm tra `docker compose ps`, cổng trong `.env` và hướng dẫn khởi chạy trong [README](../README.md).
+# Dùng nhiều loại tài khoản
+
+Sau khi đăng nhập, mở tab **Tài khoản**. Tài khoản Thanh toán mặc định dùng để nhận và chuyển tiền. Bạn có thể mở thêm Thanh toán, Tiết kiệm hoặc Tín dụng mô phỏng. Màn hình hiển thị phí trước khi xác nhận mở.
+
+- **Thanh toán:** phí duy trì minh họa 5.000 VND/tháng từ kỳ phí tiếp theo. Chọn tài khoản nguồn trong tab Chuyển tiền; chọn tài khoản trong Lịch sử và Sao kê.
+- **Tiết kiệm:** chọn Thanh toán nguồn và gửi ít nhất 100.000 VND. Kỳ hạn 90 ngày, lãi minh họa 4%/năm. Tất toán trước hạn không nhận lãi và mất phí 0,5% tiền gốc.
+- **Tín dụng mô phỏng:** hạn mức ban đầu 0. Quản trị viên nhập UUID tài khoản trong tab Quản trị để cấp hạn mức. Sau đó người dùng ghi khoản sử dụng, xem dư nợ và hoàn trả từ Thanh toán của chính mình. Phí thường niên 20.000 VND từ kỳ phí đầu tiên; không có lãi tín dụng. Tài khoản này không chuyển tiền trực tiếp.
+
+Chọn một tài khoản để xem phí đã thu hoặc còn đến hạn. Chỉ đóng được Thanh toán phụ hoặc Tín dụng khi số dư/dư nợ bằng 0 và không còn phí đến hạn. Đóng tài khoản vẫn giữ lịch sử. Sao kê CSV/PDF hiện chỉ gồm chuyển tiền; phí và hoạt động Tín dụng xem trong tab Tài khoản.

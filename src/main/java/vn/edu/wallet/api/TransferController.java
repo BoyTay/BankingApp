@@ -37,8 +37,9 @@ public class TransferController {
 
     @GetMapping
     public ApiDtos.TransferPage history(@RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,
+                                        @RequestParam(name = "accountId", required = false) UUID accountId,
                                         @RequestParam(name = "page", defaultValue = "0") int page,
                                         @RequestParam(name = "size", defaultValue = "20") int size) {
-        return transfers.history(principal.userId(), page, size);
+        return transfers.history(principal.userId(), accountId, page, size);
     }
 }

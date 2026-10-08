@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
+import vn.edu.wallet.core.WalletCodes;
 
 @Service
 public class AuthService {
@@ -45,7 +46,7 @@ public class AuthService {
         }
         UUID userId = UUID.randomUUID();
         UUID walletId = UUID.randomUUID();
-        String code = walletCode(walletId);
+        String code = WalletCodes.fromId(walletId);
         try {
             db.update("INSERT INTO app_users(id,email,display_name,password_hash,role) VALUES (?,?,?,?, 'USER')",
                     userId, email, name, passwords.encode(input.password()));
@@ -111,11 +112,7 @@ public class AuthService {
         db.update("INSERT INTO app_users(id,email,display_name,password_hash,role) VALUES (?,?,?,?, 'ADMIN')",
                 userId, normalized, "Demo Admin", passwords.encode(password));
         db.update("INSERT INTO wallets(id,owner_id,wallet_code,balance_dong) VALUES (?,?,?,0)",
-                walletId, userId, walletCode(walletId));
-    }
-
-    private static String walletCode(UUID id) {
-        return "WLT" + id.toString().replace("-", "").substring(0, 20).toUpperCase(Locale.ROOT);
+                walletId, userId, WalletCodes.fromId(walletId));
     }
 
     private static String tokenHash(String token) {

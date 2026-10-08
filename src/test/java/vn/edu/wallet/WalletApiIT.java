@@ -10,6 +10,8 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +40,9 @@ import tools.jackson.databind.ObjectMapper;
 import vn.edu.wallet.service.TransferWriteHook;
 import vn.edu.wallet.auth.AuthService;
 import vn.edu.wallet.auth.AuthMaintenance;
+import vn.edu.wallet.service.AccountFeeService;
+import vn.edu.wallet.service.AccountService;
+import vn.edu.wallet.service.WalletQueries;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(WalletApiIT.FaultConfig.class)
@@ -49,6 +54,9 @@ class WalletApiIT {
     @Autowired JdbcTemplate db;
     @Autowired AuthService auth;
     @Autowired AuthMaintenance authMaintenance;
+    @Autowired AccountFeeService accountFees;
+    @Autowired AccountService accountService;
+    @Autowired WalletQueries walletQueries;
     @Value("${local.server.port}") int port;
 
     @DynamicPropertySource
@@ -76,6 +84,266 @@ class WalletApiIT {
     void reset() {
         FAIL_AFTER_DEBIT.set(false);
         db.execute("TRUNCATE TABLE ledger_entries,transfers,admin_grants,auth_sessions,auth_rate_limits,imported_expenses,import_batches,wallets,app_users CASCADE");
+    }
+
+    @Test
+    void multipleCheckingAccountsKeepOwnershipAndLegacyDefault() throws Exception {
+        Account owner = register("multi-owner");
+        Account other = register("multi-other");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        String open = "{\"requestKey\":\"" + key + "\",\"type\":\"CHECKING\"}";
+        HttpResponse<String> created = request("POST", "/me/accounts", owner.token(), open);
+        assertEquals(201, created.statusCode(), created.body());
+        JsonNode secondary = body(created);
+        UUID secondaryId = UUID.fromString(secondary.path("accountId").asString());
+        String secondaryCode = secondary.path("accountCode").asString();
+        assertFalse(secondary.path("isDefault").asBoolean());
+        assertEquals(created.body(), request("POST", "/me/accounts", owner.token(), open).body());
+        assertEquals(2, body(request("GET", "/me/accounts", owner.token(), null)).size());
+        assertEquals(owner.walletCode(), wallet(owner).path("walletCode").asString());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + secondaryId,
+                other.token(), null));
+        assertError(400, "ACCOUNT_TYPE_UNAVAILABLE", request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"UNKNOWN\"}"));
+
+        assertEquals(201, grantRaw(administrator, secondaryCode, "100", "fund secondary",
+                UUID.randomUUID()).statusCode());
+        UUID transferKey = UUID.randomUUID();
+        String transferBody = "{\"requestKey\":\"" + transferKey + "\",\"recipientWalletCode\":\""
+                + other.walletCode() + "\",\"amountDong\":40,\"sourceAccountId\":\"" + secondaryId + "\"}";
+        HttpResponse<String> sent = request("POST", "/transfers", owner.token(), transferBody);
+        assertEquals(201, sent.statusCode(), sent.body());
+        assertEquals(200, request("POST", "/transfers", owner.token(), transferBody).statusCode());
+        String transferId = body(sent).path("transferId").asString();
+        assertEquals(200, request("GET", "/transfers/" + transferId, owner.token(), null).statusCode());
+        assertError(404, "TRANSFER_NOT_FOUND", request("GET", "/transfers/" + transferId,
+                administrator.token(), null));
+        assertEquals(0, body(request("GET", "/transfers", owner.token(), null)).path("totalItems").longValue());
+        assertEquals(1, body(request("GET", "/transfers?accountId=" + secondaryId,
+                owner.token(), null)).path("totalItems").longValue());
+        assertError(404, "WALLET_NOT_FOUND", request("GET", "/transfers?accountId=" + secondaryId,
+                other.token(), null));
+        String statementPath = "/statements?from=2026-01-01&to=2026-12-31&format=csv&accountId=" + secondaryId;
+        assertTrue(new String(download(owner, statementPath).body(), StandardCharsets.UTF_8).contains(transferId));
+        assertEquals(404, download(other, statementPath).statusCode());
+        assertEquals(60, body(request("GET", "/me/accounts/" + secondaryId,
+                owner.token(), null)).path("balanceDong").longValue());
+    }
+
+    @Test
+    void checkingFeeIsDueUntilFundedAndPaidOnlyOnce() throws Exception {
+        Account owner = register("fee-owner");
+        Account administrator = admin();
+        UUID key = UUID.randomUUID();
+        JsonNode account = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + key + "\",\"type\":\"CHECKING\"}"));
+        UUID id = UUID.fromString(account.path("accountId").asString());
+        String code = account.path("accountCode").asString();
+        LocalDate startsOn = db.queryForObject("SELECT fee_starts_on FROM wallets WHERE id=?",
+                (rs, row) -> rs.getDate(1).toLocalDate(), id);
+        assertEquals(LocalDate.now(ZoneOffset.UTC).withDayOfMonth(1).plusMonths(1), startsOn);
+        assertEquals(0, accountFees.assessAndCollect(startsOn.minusDays(1)).assessed());
+        assertTrue(accountFees.assessAndCollect(startsOn).assessed() >= 1);
+        JsonNode due = body(request("GET", "/me/accounts/" + id + "/fees", owner.token(), null));
+        assertEquals(1, due.size());
+        assertEquals("DUE", due.get(0).path("status").asString());
+        assertEquals(5000, due.get(0).path("amountDong").longValue());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + id + "/fees",
+                administrator.token(), null));
+        assertEquals(201, grantRaw(administrator, code, "6000", "fee funding",
+                UUID.randomUUID()).statusCode());
+        assertEquals(1, accountFees.assessAndCollect(startsOn).paid());
+        assertEquals(0, accountFees.assessAndCollect(startsOn).paid());
+        assertEquals(1000, body(request("GET", "/me/accounts/" + id,
+                owner.token(), null)).path("balanceDong").longValue());
+        assertEquals("PAID", body(request("GET", "/me/accounts/" + id + "/fees",
+                owner.token(), null)).get(0).path("status").asString());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM ledger_entries WHERE fee_id IS NOT NULL",
+                Integer.class));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void creditLimitSpendRepayFeeAndCloseKeepLedgerConsistent() throws Exception {
+        Account owner = register("credit-owner");
+        Account other = register("credit-other");
+        Account administrator = admin();
+        JsonNode opened = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}"));
+        UUID id = UUID.fromString(opened.path("accountId").asString());
+        assertEquals(0, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("limitDong").longValue());
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + id + "/credit",
+                other.token(), null));
+        String limit = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":100000}";
+        assertError(403, "FORBIDDEN", request("POST", "/admin/credit-accounts/" + id + "/limit",
+                owner.token(), limit));
+        assertEquals(201, request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), limit).statusCode());
+        assertEquals(200, request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), limit).statusCode());
+        String charge = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":60000,\"description\":\"Minh họa\"}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(), charge).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(), charge).statusCode());
+        assertError(422, "CREDIT_LIMIT_EXCEEDED", request("POST", "/me/accounts/" + id + "/credit/charges",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":50000,\"description\":\"Quá hạn mức\"}"));
+        assertError(422, "LIMIT_BELOW_DEBT", request("POST", "/admin/credit-accounts/" + id + "/limit",
+                administrator.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":50000}"));
+        grant(administrator, owner, 100000);
+        String repay = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\""
+                + wallet(owner).path("walletId").asString() + "\",\"amountDong\":60000}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repay).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repay).statusCode());
+        assertEquals(0, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("debtDong").longValue());
+        LocalDate startsOn = db.queryForObject("SELECT fee_starts_on FROM wallets WHERE id=?",
+                (rs, row) -> rs.getDate(1).toLocalDate(), id);
+        accountFees.assessAndCollect(startsOn);
+        JsonNode fee = body(request("GET", "/me/accounts/" + id + "/fees", owner.token(), null)).get(0);
+        assertEquals("CREDIT_ANNUAL", fee.path("feeCode").asString());
+        assertEquals("PAID", fee.path("status").asString());
+        assertEquals(20000, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("debtDong").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+        assertError(422, "ACCOUNT_NOT_EMPTY", request("POST", "/me/accounts/" + id + "/close",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\"}"));
+        String repayFee = "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\""
+                + wallet(owner).path("walletId").asString() + "\",\"amountDong\":20000}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(), repayFee).statusCode());
+        String close = "{\"requestKey\":\"" + UUID.randomUUID() + "\"}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/close", owner.token(), close).statusCode());
+        assertEquals(200, request("POST", "/me/accounts/" + id + "/close", owner.token(), close).statusCode());
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void savingsEarlyWithdrawalChargesFeeAndReplaysSafely() throws Exception {
+        Account owner = register("savings-early");
+        Account other = register("savings-foreign");
+        Account administrator = admin();
+        grant(administrator, owner, 300_000);
+        UUID openKey = UUID.randomUUID();
+        UUID fundingId = UUID.fromString(wallet(owner).path("walletId").asString());
+        String opening = "{\"requestKey\":\"" + openKey + "\",\"type\":\"SAVINGS\","
+                + "\"fundingAccountId\":\"" + fundingId + "\",\"amountDong\":200000}";
+        HttpResponse<String> created = request("POST", "/me/accounts", owner.token(), opening);
+        assertEquals(201, created.statusCode(), created.body());
+        JsonNode saving = body(created);
+        UUID id = UUID.fromString(saving.path("accountId").asString());
+        String code = saving.path("accountCode").asString();
+        assertEquals("SAVINGS", saving.path("accountType").asString());
+        assertEquals(200_000, saving.path("balanceDong").longValue());
+        assertEquals(100_000, wallet(owner).path("balanceDong").longValue());
+        assertEquals(created.body(), request("POST", "/me/accounts", owner.token(), opening).body());
+        assertError(409, "ACCOUNT_KEY_CONFLICT", request("POST", "/me/accounts", owner.token(),
+                opening.replace("200000", "200001")));
+        assertError(404, "ACCOUNT_NOT_FOUND", request("GET", "/me/accounts/" + id + "/savings",
+                other.token(), null));
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", transferRaw(owner, code, "1", UUID.randomUUID()));
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", grantRaw(administrator, code, "1",
+                "blocked", UUID.randomUUID()));
+
+        UUID closeKey = UUID.randomUUID();
+        String withdrawal = "{\"requestKey\":\"" + closeKey + "\"}";
+        HttpResponse<String> first = request("POST", "/me/accounts/" + id + "/savings/withdraw",
+                owner.token(), withdrawal);
+        assertEquals(201, first.statusCode(), first.body());
+        JsonNode result = body(first);
+        assertFalse(result.path("matured").asBoolean());
+        assertEquals(1000, result.path("feeDong").longValue());
+        assertEquals(0, result.path("interestDong").longValue());
+        assertEquals(199_000, result.path("payoutDong").longValue());
+        assertEquals(299_000, wallet(owner).path("balanceDong").longValue());
+        assertEquals(0, body(request("GET", "/me/accounts/" + id, owner.token(), null))
+                .path("balanceDong").longValue());
+        assertEquals("CLOSED", body(request("GET", "/me/accounts/" + id, owner.token(), null))
+                .path("status").asString());
+        HttpResponse<String> replay = request("POST", "/me/accounts/" + id + "/savings/withdraw",
+                owner.token(), withdrawal);
+        assertEquals(200, replay.statusCode(), replay.body());
+        assertEquals(first.body(), replay.body());
+        assertError(409, "ACCOUNT_CLOSED", request("POST", "/me/accounts/" + id + "/savings/withdraw",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\"}"));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM account_fees WHERE wallet_id=?", Integer.class, id));
+        String path = "/statements?from=2026-01-01&to=2026-12-31&format=csv&accountId=" + id;
+        HttpResponse<byte[]> statement = download(owner, path);
+        assertEquals(200, statement.statusCode());
+        String csv = new String(statement.body(), StandardCharsets.UTF_8);
+        assertTrue(csv.contains(result.path("transferId").asString()));
+        String openingTransfer = db.queryForObject("SELECT opening_transfer_id FROM savings_accounts WHERE wallet_id=?",
+                (rs, row) -> rs.getObject(1, UUID.class).toString(), id);
+        assertTrue(csv.contains(openingTransfer));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void savingsAtMaturityCreditsInterestWithoutFee() throws Exception {
+        Account owner = register("savings-mature");
+        Account administrator = admin();
+        grant(administrator, owner, 200_000);
+        UUID fundingId = UUID.fromString(wallet(owner).path("walletId").asString());
+        HttpResponse<String> opened = request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"SAVINGS\","
+                        + "\"fundingAccountId\":\"" + fundingId + "\",\"amountDong\":200000}");
+        assertEquals(201, opened.statusCode(), opened.body());
+        UUID id = UUID.fromString(body(opened).path("accountId").asString());
+        db.update("UPDATE savings_accounts SET matures_on=? WHERE wallet_id=?",
+                java.sql.Date.valueOf(LocalDate.now(ZoneOffset.UTC).minusDays(1)), id);
+        String withdrawal = "{\"requestKey\":\"" + UUID.randomUUID() + "\"}";
+        List<HttpResponse<String>> results = parallel(
+                () -> request("POST", "/me/accounts/" + id + "/savings/withdraw", owner.token(), withdrawal),
+                () -> request("POST", "/me/accounts/" + id + "/savings/withdraw", owner.token(), withdrawal));
+        assertEquals(1, results.stream().filter(r -> r.statusCode() == 201).count());
+        assertEquals(1, results.stream().filter(r -> r.statusCode() == 200).count());
+        assertEquals(results.get(0).body(), results.get(1).body());
+        JsonNode result = body(results.getFirst());
+        assertTrue(result.path("matured").asBoolean());
+        assertEquals(1973, result.path("interestDong").longValue());
+        assertEquals(0, result.path("feeDong").longValue());
+        assertEquals(201_973, wallet(owner).path("balanceDong").longValue());
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM savings_interest WHERE wallet_id=?",
+                Integer.class, id));
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM account_fees WHERE wallet_id=?",
+                Integer.class, id));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void insufficientCheckingBalanceRollsBackSavingsOpening() throws Exception {
+        Account owner = register("savings-no-funds");
+        UUID fundingId = UUID.fromString(wallet(owner).path("walletId").asString());
+        assertError(422, "INSUFFICIENT_FUNDS", request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"SAVINGS\","
+                        + "\"fundingAccountId\":\"" + fundingId + "\",\"amountDong\":200000}"));
+        assertEquals(1, body(request("GET", "/me/accounts", owner.token(), null)).size());
+        assertEquals(0, count("savings_accounts"));
+        assertEquals(0, count("transfers"));
+    }
+
+    @Test
+    void unsupportedAccountPolicyAndBadFeeSettingDoNotBlockLogin() throws Exception {
+        Account owner = register("policy-owner");
+        Account other = register("policy-other");
+        Account administrator = admin();
+        JsonNode account = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CHECKING\"}"));
+        UUID id = UUID.fromString(account.path("accountId").asString());
+        String code = account.path("accountCode").asString();
+        db.update("UPDATE wallets SET account_type='SAVINGS' WHERE id=?", id);
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", request("POST", "/transfers", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\"" + id
+                        + "\",\"recipientWalletCode\":\"" + other.walletCode() + "\",\"amountDong\":1}"));
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", grantRaw(administrator, code, "1",
+                "unsupported", UUID.randomUUID()));
+        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, "invalid", "invalid");
+        assertFalse(badConfiguration.assessAndCollect(LocalDate.now(ZoneOffset.UTC)).ran());
+        assertEquals(200, request("GET", "/me/wallet", owner.token(), null).statusCode());
     }
 
     @Test
