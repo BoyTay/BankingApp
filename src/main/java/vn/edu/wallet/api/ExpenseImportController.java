@@ -19,6 +19,13 @@ public class ExpenseImportController {
     private final ExpenseImportService imports;
     public ExpenseImportController(ExpenseImportService imports) { this.imports = imports; }
 
+    @PostMapping("/preview")
+    public ExpenseImportService.PreviewView preview(
+            @RequestParam(name = "format") String format,
+            @RequestParam(name = "file") MultipartFile file) {
+        return imports.previewFile(format, file);
+    }
+
     @PostMapping
     public ResponseEntity<ApiDtos.ImportView> upload(
             @RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,

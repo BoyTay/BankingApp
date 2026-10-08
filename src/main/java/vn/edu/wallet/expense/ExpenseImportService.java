@@ -30,25 +30,21 @@ public class ExpenseImportService {
         this.sampleB = sampleB;
     }
 
+    public PreviewView previewFile(String formatCode, MultipartFile file) {
+        FileInput input = readFile(formatCode, file, true);
+        CsvPreview preview = input.adapter().preview(input.bytes());
+        return new PreviewView(formatCode, sourceName(file.getOriginalFilename()), preview.rowCount(),
+                preview.validRows(), preview.errors(), preview.canImport());
+    }
+
     @Transactional
     public ImportResult importFile(UUID ownerId, String formatCode, UUID requestKey, MultipartFile file) {
-        if (requestKey == null || file == null || file.isEmpty()) {
+        if (requestKey == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu khóa yêu cầu hoặc tệp CSV");
         }
-        ExpenseCsvAdapter adapter = switch (formatCode == null ? "" : formatCode) {
-            case "SAMPLE_A" -> sampleA;
-            case "SAMPLE_B" -> sampleB;
-            default -> throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_FORMAT",
-                    "Định dạng nhập phải là SAMPLE_A hoặc SAMPLE_B");
-        };
-        if (file.getSize() > MAX_BYTES) throw tooLarge();
-        byte[] bytes;
-        try {
-            bytes = file.getBytes();
-        } catch (IOException ex) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CSV", "Không đọc được tệp CSV");
-        }
-        if (bytes.length > MAX_BYTES) throw tooLarge();
+        FileInput input = readFile(formatCode, file, false);
+        byte[] bytes = input.bytes();
+        ExpenseCsvAdapter adapter = input.adapter();
         String hash = sha256(bytes);
         // All imports take key lock first, then content lock. The unique constraints
         // remain a database backstop if two app instances race.
@@ -81,6 +77,27 @@ public class ExpenseImportService {
                     expense.description(), expense.category(), expense.amountDong());
         }
         return new ImportResult(find("id=?", batchId).getFirst().view(), false);
+    }
+
+    private FileInput readFile(String formatCode, MultipartFile file, boolean allowEmpty) {
+        if (file == null || (!allowEmpty && file.isEmpty())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Thiếu tệp CSV");
+        }
+        ExpenseCsvAdapter adapter = switch (formatCode == null ? "" : formatCode) {
+            case "SAMPLE_A" -> sampleA;
+            case "SAMPLE_B" -> sampleB;
+            default -> throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_FORMAT",
+                    "Định dạng nhập phải là SAMPLE_A hoặc SAMPLE_B");
+        };
+        if (file.getSize() > MAX_BYTES) throw tooLarge();
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException ex) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CSV", "Không đọc được tệp CSV");
+        }
+        if (bytes.length > MAX_BYTES) throw tooLarge();
+        return new FileInput(adapter, bytes);
     }
 
     private void advisoryLock(String value) {
@@ -122,5 +139,9 @@ public class ExpenseImportService {
     }
 
     private record ImportRow(ApiDtos.ImportView view, String format, String hash) {}
+    private record FileInput(ExpenseCsvAdapter adapter, byte[] bytes) {}
+    public record PreviewView(String format, String sourceName, int rowCount,
+                              List<ImportedExpense> validRows, List<CsvPreview.RowError> errors,
+                              boolean canImport) {}
     public record ImportResult(ApiDtos.ImportView view, boolean replayed) {}
 }

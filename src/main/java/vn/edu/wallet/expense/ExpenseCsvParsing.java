@@ -14,8 +14,6 @@ import java.util.function.Function;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
-import org.springframework.http.HttpStatus;
-import vn.edu.wallet.api.ApiException;
 import vn.edu.wallet.api.RequestChecks;
 
 final class ExpenseCsvParsing {
@@ -23,9 +21,9 @@ final class ExpenseCsvParsing {
     private static final LocalDate LATEST = LocalDate.of(2100, 12, 31);
     private ExpenseCsvParsing() {}
 
-    static List<ImportedExpense> parse(byte[] bytes, char delimiter, List<String> header,
-                                       Function<String, LocalDate> dateParser,
-                                       Function<String, Long> amountParser) {
+    static CsvPreview preview(byte[] bytes, char delimiter, List<String> header,
+                              Function<String, LocalDate> dateParser,
+                              Function<String, Long> amountParser) {
         String text;
         try {
             text = StandardCharsets.UTF_8.newDecoder()
@@ -33,54 +31,66 @@ final class ExpenseCsvParsing {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes)).toString();
         } catch (CharacterCodingException ex) {
-            throw invalidCsv("Tệp không phải UTF-8 hợp lệ");
+            return fileError(null, "Tệp không phải UTF-8 hợp lệ");
         }
         if (text.startsWith("\uFEFF")) text = text.substring(1);
         try (CSVParser parser = CSVParser.parse(text,
                 CSVFormat.DEFAULT.builder().setDelimiter(delimiter).setIgnoreEmptyLines(false).get())) {
             List<CSVRecord> records = parser.getRecords();
             if (records.isEmpty() || records.getFirst().size() != header.size()) {
-                throw invalidCsv("Header CSV không đúng định dạng");
+                return fileError(1, "Header CSV không đúng định dạng");
             }
             for (int i = 0; i < header.size(); i++) {
                 if (!header.get(i).equals(records.getFirst().get(i))) {
-                    throw invalidCsv("Header CSV không đúng định dạng");
+                    return fileError(1, "Header CSV không đúng định dạng");
                 }
             }
-            if (records.size() <= 1) throw invalidCsv("CSV không có dòng dữ liệu");
-            if (records.size() - 1 > 5_000) throw invalidCsv("CSV vượt quá 5000 dòng dữ liệu");
-            List<ImportedExpense> result = new ArrayList<>();
+            if (records.size() <= 1) return fileError(null, "CSV không có dòng dữ liệu");
+            int rowCount = records.size() - 1;
+            if (rowCount > 5_000) return fileError(null, "CSV vượt quá 5000 dòng dữ liệu");
+            List<ImportedExpense> validRows = new ArrayList<>();
+            List<CsvPreview.RowError> errors = new ArrayList<>();
             for (int i = 1; i < records.size(); i++) {
                 CSVRecord row = records.get(i);
                 int line = i + 1;
-                if (row.size() != 4) throw invalidCsv("Dòng " + line + ": cần đúng 4 cột");
+                if (row.size() != 4) {
+                    errors.add(rowError(line, "INVALID_CSV", "cần đúng 4 cột"));
+                    continue;
+                }
                 LocalDate date;
                 try {
                     date = dateParser.apply(row.get(0).trim());
                 } catch (DateTimeParseException ex) {
-                    throw invalidCsv("Dòng " + line + ": ngày không hợp lệ");
+                    errors.add(rowError(line, "INVALID_CSV", "ngày không hợp lệ"));
+                    continue;
                 }
                 if (date.isBefore(EARLIEST) || date.isAfter(LATEST)) {
-                    throw invalidCsv("Dòng " + line + ": ngày ngoài khoảng 2000–2100");
+                    errors.add(rowError(line, "INVALID_CSV", "ngày ngoài khoảng 2000–2100"));
+                    continue;
                 }
                 String description = row.get(1).trim();
                 String category = row.get(2).trim();
                 if (description.isEmpty() || description.length() > 500
                         || category.isEmpty() || category.length() > 100) {
-                    throw invalidCsv("Dòng " + line + ": nội dung hoặc danh mục không hợp lệ");
+                    errors.add(rowError(line, "INVALID_CSV", "nội dung hoặc danh mục không hợp lệ"));
+                    continue;
                 }
                 long amount;
                 try {
                     amount = amountParser.apply(row.get(3).trim());
                 } catch (NumberFormatException ex) {
-                    throw invalidAmount(line);
+                    errors.add(rowError(line, "INVALID_AMOUNT", "số tiền không hợp lệ"));
+                    continue;
                 }
-                if (amount < 1 || amount > RequestChecks.MAX_AMOUNT_DONG) throw invalidAmount(line);
-                result.add(new ImportedExpense(line, date, description, category, amount));
+                if (amount < 1 || amount > RequestChecks.MAX_AMOUNT_DONG) {
+                    errors.add(rowError(line, "INVALID_AMOUNT", "số tiền không hợp lệ"));
+                    continue;
+                }
+                validRows.add(new ImportedExpense(line, date, description, category, amount));
             }
-            return List.copyOf(result);
+            return new CsvPreview(rowCount, validRows, errors);
         } catch (IOException | IllegalArgumentException ex) {
-            throw invalidCsv("Cấu trúc CSV không hợp lệ");
+            return fileError(null, "Cấu trúc CSV không hợp lệ");
         }
     }
 
@@ -103,12 +113,11 @@ final class ExpenseCsvParsing {
         return value -> LocalDate.parse(value, format);
     }
 
-    private static ApiException invalidCsv(String message) {
-        return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CSV", message);
+    private static CsvPreview fileError(Integer line, String message) {
+        return new CsvPreview(0, List.of(), List.of(new CsvPreview.RowError(line, "INVALID_CSV", message)));
     }
 
-    private static ApiException invalidAmount(int line) {
-        return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_AMOUNT",
-                "Dòng " + line + ": số tiền không hợp lệ");
+    private static CsvPreview.RowError rowError(int line, String code, String detail) {
+        return new CsvPreview.RowError(line, code, "Dòng " + line + ": " + detail);
     }
 }
