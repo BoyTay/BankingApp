@@ -23,11 +23,18 @@ public class StatementController {
     public ResponseEntity<byte[]> export(@RequestAttribute(AuthInterceptor.PRINCIPAL_ATTRIBUTE) Principal principal,
             @RequestParam(name = "from", required = false) String from,
             @RequestParam(name = "to", required = false) String to,
-            @RequestParam(name = "format", required = false) String format) throws IOException {
-        StatementService.ExportedFile file = statements.export(principal.userId(), from, to, format);
-        return ResponseEntity.ok()
+            @RequestParam(name = "format", required = false) String format,
+            @RequestParam(name = "page", required = false) Integer page,
+            @RequestParam(name = "size", required = false) Integer size) throws IOException {
+        StatementService.ExportedFile file = statements.export(principal.userId(), from, to, format, page, size);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.filename() + "\"")
-                .contentType(MediaType.parseMediaType(file.contentType()))
-                .body(file.bytes());
+                .contentType(MediaType.parseMediaType(file.contentType()));
+        if (file.page() != null) {
+            response.header("X-Page", file.page().toString());
+            response.header("X-Page-Size", file.size().toString());
+            response.header("X-Has-More", Boolean.toString(file.hasMore()));
+        }
+        return response.body(file.bytes());
     }
 }

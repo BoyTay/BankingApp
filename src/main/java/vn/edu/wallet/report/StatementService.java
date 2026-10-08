@@ -33,6 +33,12 @@ public class StatementService {
 
     @Transactional(readOnly = true)
     public ExportedFile export(UUID userId, String from, String to, String requestedFormat) throws IOException {
+        return export(userId, from, to, requestedFormat, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public ExportedFile export(UUID userId, String from, String to, String requestedFormat,
+                               Integer page, Integer size) throws IOException {
         DateRange range = DateRange.parse(from, to);
         String format = requestedFormat == null ? "" : requestedFormat.toLowerCase(Locale.ROOT);
         StatementExporterCreator creator = switch (format) {
@@ -40,6 +46,11 @@ public class StatementService {
             case "pdf" -> pdf;
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_FORMAT", "Định dạng sao kê phải là csv hoặc pdf");
         };
+        boolean paged = page != null || size != null;
+        if (paged && (page == null || size == null || page < 0 || page > 1000 || size < 1 || size > 1000)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_PAGE",
+                    "page phải từ 0 đến 1000 và size từ 1 đến 1000");
+        }
         WalletQueries.WalletRow wallet = wallets.ownedBy(userId);
         List<Statement.Line> lines = db.query("""
                 SELECT t.id,t.created_at,t.amount_dong,t.sender_wallet_id,
@@ -49,7 +60,7 @@ public class StatementService {
                 JOIN wallets rw ON rw.id=t.recipient_wallet_id
                 WHERE (t.sender_wallet_id=? OR t.recipient_wallet_id=?)
                   AND t.created_at>=? AND t.created_at<?
-                ORDER BY t.created_at,t.id LIMIT ?
+                ORDER BY t.created_at,t.id LIMIT ? OFFSET ?
                 """, (rs, row) -> {
             boolean outgoing = wallet.id().equals(rs.getObject("sender_wallet_id", UUID.class));
             return new Statement.Line(rs.getTimestamp("created_at").toInstant(),
@@ -60,11 +71,13 @@ public class StatementService {
         }, wallet.id(), wallet.id(),
                 Timestamp.from(range.from().atStartOfDay(ZoneOffset.UTC).toInstant()),
                 Timestamp.from(range.to().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant()),
-                MAX_LINES + 1);
-        if (lines.size() > MAX_LINES) {
+                paged ? size + 1 : MAX_LINES + 1, paged ? (long) page * size : 0L);
+        if (!paged && lines.size() > MAX_LINES) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "STATEMENT_TOO_LARGE",
                     "Sao kê vượt quá 10000 giao dịch");
         }
+        boolean hasMore = paged && lines.size() > size;
+        if (hasMore) lines = lines.subList(0, size);
         long incoming = 0;
         long outgoing = 0;
         for (Statement.Line line : lines) {
@@ -75,9 +88,11 @@ public class StatementService {
                 List.copyOf(lines), incoming, outgoing);
         byte[] bytes = creator.export(statement);
         String filename = "statement-" + FILE_DATE.format(range.from()) + "-"
-                + FILE_DATE.format(range.to()) + "." + format;
-        return new ExportedFile(filename, format.equals("csv") ? "text/csv; charset=UTF-8" : "application/pdf", bytes);
+                + FILE_DATE.format(range.to()) + (paged ? "-page-" + (page + 1) : "") + "." + format;
+        return new ExportedFile(filename, format.equals("csv") ? "text/csv; charset=UTF-8" : "application/pdf",
+                bytes, paged ? page : null, paged ? size : null, hasMore);
     }
 
-    public record ExportedFile(String filename, String contentType, byte[] bytes) {}
+    public record ExportedFile(String filename, String contentType, byte[] bytes,
+                               Integer page, Integer size, boolean hasMore) {}
 }

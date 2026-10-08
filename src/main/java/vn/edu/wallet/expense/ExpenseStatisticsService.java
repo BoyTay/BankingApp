@@ -1,11 +1,13 @@
 package vn.edu.wallet.expense;
 
 import java.sql.Date;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
@@ -24,7 +26,7 @@ public class ExpenseStatisticsService {
         this.byMonth = byMonth;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public ApiDtos.ExpenseStatsView stats(UUID userId, String from, String to, String groupBy) {
         DateRange range = DateRange.parse(from, to);
         ExpenseAggregationStrategy strategy = switch (groupBy == null ? "" : groupBy) {
@@ -33,21 +35,29 @@ public class ExpenseStatisticsService {
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_GROUP_BY",
                     "groupBy phải là category hoặc month");
         };
-        List<ImportedExpense> expenses = db.query("""
-                SELECT e.source_row,e.spent_on,e.description,e.category,e.amount_dong
-                FROM imported_expenses e JOIN import_batches b ON b.id=e.batch_id
-                WHERE b.owner_user_id=? AND e.spent_on BETWEEN ? AND ?
-                ORDER BY e.spent_on,e.id LIMIT ?
-                """, (rs, row) -> new ImportedExpense(rs.getInt("source_row"),
-                rs.getDate("spent_on").toLocalDate(), rs.getString("description"),
-                rs.getString("category"), rs.getLong("amount_dong")),
-                userId, Date.valueOf(range.from()), Date.valueOf(range.to()), MAX_ROWS + 1);
-        if (expenses.size() > MAX_ROWS) {
+        Object[] parameters = {userId, Date.valueOf(range.from()), Date.valueOf(range.to())};
+        long rowCount = db.queryForObject("""
+                SELECT count(*) FROM (
+                    SELECT 1
+                    FROM imported_expenses e JOIN import_batches b ON b.id=e.batch_id
+                    WHERE b.owner_user_id=? AND e.spent_on BETWEEN ? AND ?
+                    LIMIT 100001
+                ) scoped
+                """, Long.class, parameters);
+        if (rowCount > MAX_ROWS) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "STATS_TOO_LARGE",
                     "Thống kê vượt quá 100000 khoản chi");
         }
         try {
-            List<ExpenseSummary> summaries = summarize(strategy, expenses);
+            List<ExpenseSummary> summaries = db.query("""
+                    SELECT %s AS group_key, sum(e.amount_dong) AS amount_dong, count(*) AS item_count
+                    FROM imported_expenses e JOIN import_batches b ON b.id=e.batch_id
+                    WHERE b.owner_user_id=? AND e.spent_on BETWEEN ? AND ?
+                    GROUP BY 1
+                    """.formatted(strategy.sqlKeyExpression()), (rs, row) -> new ExpenseSummary(
+                    rs.getString("group_key"), rs.getBigDecimal("amount_dong").longValueExact(),
+                    rs.getLong("item_count")), parameters).stream()
+                    .sorted(Comparator.comparing(ExpenseSummary::key)).toList();
             long totalAmount = 0;
             long totalCount = 0;
             for (ExpenseSummary summary : summaries) {
