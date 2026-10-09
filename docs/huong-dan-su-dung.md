@@ -90,3 +90,13 @@ Tab **Thông báo** liệt kê thông báo khi bạn chuyển hoặc nhận ti�
 Để nhận cảnh báo số dư thấp, ngay trong tab **Thông báo**, ở mục **Cảnh báo số dư thấp**, chọn tài khoản Thanh toán, nhập ngưỡng (0 để tắt) rồi bấm **Lưu ngưỡng**. Cảnh báo chỉ gửi một lần khi số dư tụt xuống dưới ngưỡng, và gửi lại sau khi số dư đã trở lại từ ngưỡng trở lên.
 
 Mỗi thông báo cũng được gửi thành email. Trong Docker Compose, email đi vào **Mailpit** (hộp thư thử nghiệm) nên không tới hộp thư thật; mở `http://localhost:8025` để xem. Nhắc nhở phí, nợ tín dụng và tiết kiệm đáo hạn do tác vụ UTC hằng ngày gửi; mỗi nhắc nhở không lặp lại trong cùng kỳ (phí: một lần mỗi tuần, nợ tín dụng: một lần mỗi tháng, tiết kiệm: một lần cho mỗi khoản).
+
+# Giao diện và hiển thị
+
+- **Điều hướng:** trên máy tính, các chức năng nằm ở thanh bên trái; trên điện thoại chúng nằm ở thanh dưới cùng (vuốt ngang để thấy các mục còn lại). Số thông báo chưa đọc hiện ở mục **Thông báo**.
+- **Sáng/tối:** nút mặt trăng/mặt trời ở góc phải thanh trên đổi giao diện. Mặc định theo cài đặt của hệ điều hành; lựa chọn của bạn được nhớ trên trình duyệt đó.
+- **Tổng quan:** thẻ số dư, tiền vào/ra trong tháng, số thông báo chưa đọc, số tài khoản và biểu đồ biến động số dư qua 20 giao dịch gần nhất. Tiền vào/ra chỉ tính trên 100 giao dịch gần nhất; nếu tháng có nhiều hơn, số có dấu `≥`.
+- **Tài khoản:** thẻ Tín dụng có thanh hạn mức đã dùng (cam từ 70%, đỏ từ 90%); thẻ Tiết kiệm cho biết ngày đáo hạn và lãi suất.
+- **Chi tiêu:** sau khi bấm **Xem thống kê** có biểu đồ tròn (theo danh mục) hoặc biểu đồ cột (theo tháng); danh sách bên dưới có cùng số liệu dạng chữ cho trình đọc màn hình.
+- **Xác nhận:** các thao tác quan trọng hiện hộp xác nhận. Khi chuyển tiền, hộp xác nhận hiện tên người nhận tra từ mã ví, nên nhập sai mã sẽ báo lỗi trước khi chuyển. Nhấn `Esc` để hủy.
+- **Truy cập:** màu chữ đạt tỷ lệ tương phản tối thiểu 4,5:1 ở cả hai chế độ; có thể dùng bàn phím để thao tác; hiệu ứng chuyển động tắt khi hệ điều hành bật "giảm chuyển động".

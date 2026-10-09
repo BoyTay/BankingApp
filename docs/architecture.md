@@ -50,3 +50,7 @@ Các trang gồm đăng nhập/đăng ký, tổng quan, chuyển tiền, lịch 
 ## Thông báo (Observer)
 
 `vn.edu.wallet.notify` chứa `EventSubject`, các `NotificationObserver` (trong ứng dụng, email, SMS mô phỏng), `LowBalanceMonitor` và `ReminderService`. Service nghiệp vụ chỉ gọi `publish`; sự kiện được phát sau khi transaction commit. Bảng: `notifications`, `notification_settings` (ngưỡng số dư thấp), `reminder_log` (chống nhắc lặp). Xem [Observer](patterns.md).
+
+## Giao diện web (tĩnh)
+
+`src/main/resources/static` gồm `index.html`, `app.css` (token màu/khoảng cách dùng chung, chế độ sáng/tối), `app.js` và hai thư viện tự host: `fonts/` (Inter) và `vendor/chart.umd.min.js` (Chart.js 4.4.7), nên giao diện chạy được khi không có Internet. Mọi màu đi qua biến CSS; cặp màu chữ/nền được kiểm tra đạt WCAG AA. Không có bước build front-end.

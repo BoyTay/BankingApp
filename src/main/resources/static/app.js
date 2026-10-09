@@ -135,7 +135,11 @@ function signOut(callApi = true) {
 
 function selectTab(name) {
   if (name === "admin" && state.user?.role !== "ADMIN") return;
-  document.querySelectorAll("[data-tab]").forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    const active = button.dataset.tab === name;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.hidden = panel.dataset.panel !== name);
   message("");
   if (name === "history") loadHistory().catch((error) => message(error.message, true));
@@ -216,6 +220,10 @@ function drawBalanceChart() {
   balanceChart = null;
   empty.hidden = balancePoints.length > 0;
   canvas.hidden = balancePoints.length === 0;
+  if (balancePoints.length) {
+    const values = balancePoints.map((point) => point.balance);
+    canvas.setAttribute("aria-label", `Biến động số dư qua ${values.length} giao dịch gần nhất: từ ${money(values[0])} ₫ đến ${money(values[values.length - 1])} ₫, thấp nhất ${money(Math.min(...values))} ₫, cao nhất ${money(Math.max(...values))} ₫.`);
+  }
   if (!balancePoints.length || typeof Chart === "undefined") return;
   const color = cssVar("--primary") || "#162b53";
   const context = canvas.getContext("2d");
@@ -534,6 +542,7 @@ function drawStatsChart() {
   const byMonth = statsData.groupBy === "month";
   const palette = chartPalette();
   const values = statsData.items.map((item) => item.amountDong);
+  $("stats-chart").setAttribute("aria-label", `Biểu đồ chi tiêu theo ${byMonth ? "tháng" : "danh mục"}, chi tiết trong danh sách bên dưới.`);
   statsChart = new Chart($("stats-chart").getContext("2d"), {
     type: byMonth ? "bar" : "doughnut",
     data: {
