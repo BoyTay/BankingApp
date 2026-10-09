@@ -31,6 +31,7 @@ services:
       MAIL_HOST: mailpit
       MAIL_PORT: 1025
       NOTIFY_EMAIL_ENABLED: ${NOTIFY_EMAIL_ENABLED:-true}
+      NOTIFY_REMINDERS_ENABLED: ${NOTIFY_REMINDERS_ENABLED:-true}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:

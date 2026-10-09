@@ -29,14 +29,15 @@ public class EventSubject {
     public void publish(WalletEvent event) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() { notifyAllObservers(event); }
+                @Override public void afterCommit() { deliver(event); }
             });
         } else {
-            notifyAllObservers(event);
+            deliver(event);
         }
     }
 
-    void notifyAllObservers(WalletEvent event) {
+    /** Notifies observers immediately; use when the caller is already past the commit. */
+    public void deliver(WalletEvent event) {
         for (NotificationObserver observer : observers) {
             try {
                 observer.update(event);

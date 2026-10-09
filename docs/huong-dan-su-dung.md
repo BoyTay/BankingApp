@@ -82,3 +82,11 @@ Sau khi đăng nhập, mở tab **Tài khoản**. Tài khoản Thanh toán mặc
 - **Tín dụng mô phỏng:** hạn mức ban đầu 0. Quản trị viên nhập UUID tài khoản trong tab Quản trị để cấp hạn mức. Sau đó người dùng ghi khoản sử dụng, xem dư nợ và hoàn trả từ Thanh toán của chính mình. Phí thường niên 20.000 VND từ kỳ phí đầu tiên; không có lãi tín dụng. Tài khoản này không chuyển tiền trực tiếp.
 
 Chọn một tài khoản để xem phí đã thu hoặc còn đến hạn. Chỉ đóng được Thanh toán phụ hoặc Tín dụng khi số dư/dư nợ bằng 0 và không còn phí đến hạn. Đóng tài khoản vẫn giữ lịch sử. Sao kê CSV/PDF hiện chỉ gồm chuyển tiền; phí và hoạt động Tín dụng xem trong tab Tài khoản.
+
+# Thông báo và email
+
+Tab **Thông báo** liệt kê thông báo khi bạn chuyển hoặc nhận tiền, được quản trị viên cấp tiền, số dư xuống thấp, phí chưa thu được, còn dư nợ tín dụng hoặc tiết kiệm sắp đáo hạn. Số thông báo chưa đọc hiện cạnh tên tab và tự cập nhật mỗi 30 giây.
+
+Để nhận cảnh báo số dư thấp, vào **Tài khoản**, chọn tài khoản Thanh toán, nhập ngưỡng ở mục **Cảnh báo số dư thấp** (0 để tắt) rồi bấm **Lưu ngưỡng**. Cảnh báo chỉ gửi một lần khi số dư tụt xuống dưới ngưỡng, và gửi lại sau khi số dư đã trở lại từ ngưỡng trở lên.
+
+Mỗi thông báo cũng được gửi thành email. Trong Docker Compose, email đi vào **Mailpit** (hộp thư thử nghiệm) nên không tới hộp thư thật; mở `http://localhost:8025` để xem. Nhắc nhở phí, nợ tín dụng và tiết kiệm đáo hạn do tác vụ UTC hằng ngày gửi; mỗi nhắc nhở không lặp lại trong cùng kỳ (phí: một lần mỗi tuần, nợ tín dụng: một lần mỗi tháng, tiết kiệm: một lần cho mỗi khoản).

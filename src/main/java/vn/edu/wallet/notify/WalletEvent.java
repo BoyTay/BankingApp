@@ -45,4 +45,43 @@ public sealed interface WalletEvent {
                     + dong(balanceAfterDong) + ".";
         }
     }
+
+    record LowBalance(UUID userId, UUID walletId, String walletCode, long balanceDong, long thresholdDong)
+            implements WalletEvent {
+        public String type() { return "LOW_BALANCE"; }
+        public String title() { return "Số dư thấp: " + dong(balanceDong); }
+        public String body() {
+            return "Số dư ví " + walletCode + " là " + dong(balanceDong) + ", thấp hơn ngưỡng cảnh báo "
+                    + dong(thresholdDong) + ".";
+        }
+    }
+
+    record FeeDue(UUID userId, UUID walletId, String walletCode, long amountDong, String periodStart)
+            implements WalletEvent {
+        public String type() { return "FEE_DUE"; }
+        public String title() { return "Phí " + dong(amountDong) + " chưa thu được"; }
+        public String body() {
+            return "Phí kỳ " + periodStart + " của ví " + walletCode + " (" + dong(amountDong)
+                    + ") chưa thu được do không đủ số dư. Hãy nạp thêm tiền để hệ thống thu phí.";
+        }
+    }
+
+    record CreditDebt(UUID userId, UUID walletId, String walletCode, long debtDong) implements WalletEvent {
+        public String type() { return "CREDIT_DEBT"; }
+        public String title() { return "Nhắc trả nợ tín dụng " + dong(debtDong); }
+        public String body() {
+            return "Tài khoản tín dụng " + walletCode + " đang dư nợ " + dong(debtDong)
+                    + ". Hãy trả nợ từ tài khoản thanh toán của bạn.";
+        }
+    }
+
+    record SavingsMaturing(UUID userId, UUID walletId, String walletCode, String maturesOn, long daysLeft)
+            implements WalletEvent {
+        public String type() { return "SAVINGS_MATURING"; }
+        public String title() { return "Tiết kiệm sắp đáo hạn"; }
+        public String body() {
+            return "Khoản tiết kiệm " + walletCode + " đáo hạn ngày " + maturesOn + " (còn " + daysLeft
+                    + " ngày). Rút trước hạn sẽ bị tính phí.";
+        }
+    }
 }

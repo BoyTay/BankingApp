@@ -11,16 +11,19 @@ import vn.edu.wallet.core.TransferErrorCode;
 import vn.edu.wallet.core.TransferException;
 import vn.edu.wallet.core.TransferRequest;
 import vn.edu.wallet.core.TransferRules;
+import vn.edu.wallet.notify.LowBalanceMonitor;
 
 /** Posts a transfer between two already authorized accounts inside the caller's transaction. */
 @Component
 public class InternalAccountTransfers {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
+    private final LowBalanceMonitor lowBalance;
 
-    public InternalAccountTransfers(JdbcTemplate db, WalletQueries wallets) {
+    public InternalAccountTransfers(JdbcTemplate db, WalletQueries wallets, LowBalanceMonitor lowBalance) {
         this.db = db;
         this.wallets = wallets;
+        this.lowBalance = lowBalance;
     }
 
     public UUID move(UUID sourceId, UUID targetId, long amount, UUID requestKey) {
@@ -55,6 +58,8 @@ public class InternalAccountTransfers {
                 UUID.randomUUID(), sourceId, transferId, -amount, result.senderBalanceAfter().dong());
         db.update("INSERT INTO ledger_entries(id,wallet_id,transfer_id,delta_dong,balance_after_dong) VALUES (?,?,?,?,?)",
                 UUID.randomUUID(), targetId, transferId, amount, result.recipientBalanceAfter().dong());
+        lowBalance.check(sourceId);
+        lowBalance.check(targetId);
         return transferId;
     }
 }

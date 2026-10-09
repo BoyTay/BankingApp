@@ -57,6 +57,8 @@ class WalletApiIT {
     @Autowired AccountFeeService accountFees;
     @Autowired AccountService accountService;
     @Autowired WalletQueries walletQueries;
+    @Autowired vn.edu.wallet.notify.LowBalanceMonitor lowBalanceMonitor;
+    @Autowired vn.edu.wallet.notify.ReminderService reminders;
     @Value("${local.server.port}") int port;
 
     @DynamicPropertySource
@@ -341,7 +343,7 @@ class WalletApiIT {
                         + "\",\"recipientWalletCode\":\"" + other.walletCode() + "\",\"amountDong\":1}"));
         assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", grantRaw(administrator, code, "1",
                 "unsupported", UUID.randomUUID()));
-        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, "invalid", "invalid");
+        var badConfiguration = new AccountFeeService(db, walletQueries, accountService, lowBalanceMonitor, "invalid", "invalid");
         assertFalse(badConfiguration.assessAndCollect(LocalDate.now(ZoneOffset.UTC)).ran());
         assertEquals(200, request("GET", "/me/wallet", owner.token(), null).statusCode());
     }
@@ -1010,6 +1012,64 @@ class WalletApiIT {
         FAIL_AFTER_DEBIT.set(false);
         assertEquals(1, notifications(a, "TRANSFER_SENT"));
         assertEquals(1, notifications(b, "TRANSFER_RECEIVED"));
+    }
+
+    @Test
+    void lowBalanceAlertsOnceThenRearmsAfterBalanceRecovers() throws Exception {
+        Account a = register("low-a");
+        Account b = register("low-b");
+        grant(admin(), a, 100);
+        String path = "/me/accounts/" + wallet(a).path("walletId").asString() + "/notification-settings";
+        assertEquals(200, request("PUT", path, a.token(), "{\"lowBalanceDong\":50}").statusCode());
+        assertEquals(50, body(request("GET", path, a.token(), null)).path("lowBalanceDong").longValue());
+        assertEquals(0, notifications(a, "LOW_BALANCE"));
+
+        assertEquals(201, transfer(a, b, 60, UUID.randomUUID()).statusCode()); // 40 < 50
+        assertEquals(1, notifications(a, "LOW_BALANCE"));
+        assertEquals(201, transfer(a, b, 10, UUID.randomUUID()).statusCode()); // 30, already alerted
+        assertEquals(1, notifications(a, "LOW_BALANCE"));
+        grant(admin(), a, 100); // 130 re-arms
+        assertEquals(201, transfer(a, b, 100, UUID.randomUUID()).statusCode()); // 30 again
+        assertEquals(2, notifications(a, "LOW_BALANCE"));
+        assertEquals(0, notifications(b, "LOW_BALANCE"));
+
+        assertError(400, "INVALID_AMOUNT", request("PUT", path, a.token(), "{\"lowBalanceDong\":-1}"));
+        assertError(400, "INVALID_AMOUNT", request("PUT", path, a.token(), "{\"lowBalanceDong\":\"10\"}"));
+        assertError(404, "WALLET_NOT_FOUND", request("GET", path, b.token(), null));
+    }
+
+    @Test
+    void notificationApiIsPrivateAndTracksReadState() throws Exception {
+        Account a = register("api-a");
+        Account b = register("api-b");
+        grant(admin(), a, 100);
+        assertEquals(201, transfer(a, b, 10, UUID.randomUUID()).statusCode());
+        JsonNode mine = body(request("GET", "/notifications", a.token(), null));
+        assertEquals(2, mine.path("total").longValue());
+        assertEquals(2, mine.path("unread").longValue());
+        String id = mine.path("items").get(0).path("id").asString();
+        assertError(404, "NOTIFICATION_NOT_FOUND", request("POST", "/notifications/" + id + "/read", b.token(), null));
+        assertEquals(204, request("POST", "/notifications/" + id + "/read", a.token(), null).statusCode());
+        assertEquals(1, body(request("GET", "/notifications", a.token(), null)).path("unread").longValue());
+        assertEquals(204, request("POST", "/notifications/read-all", a.token(), null).statusCode());
+        assertEquals(0, body(request("GET", "/notifications", a.token(), null)).path("unread").longValue());
+        assertEquals(1, body(request("GET", "/notifications", b.token(), null)).path("total").longValue());
+        assertEquals(401, request("GET", "/notifications", null, null).statusCode());
+    }
+
+    @Test
+    void feeReminderIsSentOncePerWeek() throws Exception {
+        Account a = register("remind-a");
+        UUID walletId = UUID.fromString(wallet(a).path("walletId").asString());
+        db.update("INSERT INTO account_fees(id,wallet_id,fee_code,period_start,amount_dong) VALUES (?,?,?,?,?)",
+                UUID.randomUUID(), walletId, "CHECKING_MONTHLY", java.sql.Date.valueOf("2026-10-01"), 5000);
+        LocalDate day = LocalDate.of(2026, 10, 7);
+        assertEquals(1, reminders.run(day));
+        assertEquals(0, reminders.run(day));
+        assertEquals(0, reminders.run(day.plusDays(1)));
+        assertEquals(1, notifications(a, "FEE_DUE"));
+        assertEquals(1, reminders.run(day.plusWeeks(1)));
+        assertEquals(2, notifications(a, "FEE_DUE"));
     }
 
     private int notifications(Account account, String type) {

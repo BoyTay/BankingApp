@@ -187,3 +187,19 @@ Tất cả đường dẫn dưới đây nằm dưới `/api/v1` và cần Beare
 - `POST /me/accounts/{id}/close` với `requestKey`: đóng Thanh toán phụ hoặc Tín dụng đã tất toán và hết phí đến hạn. Không xóa lịch sử.
 
 Phí thường niên 20.000 VND được ghi thành dư nợ khi đủ hạn mức. Nếu không đủ, khoản phí giữ trạng thái `DUE` và có thể xem ở `GET /me/accounts/{id}/fees`.
+
+## Thông báo và nhắc nhở
+
+Mọi endpoint dưới đây cần đăng nhập và chỉ trả dữ liệu của người dùng hiện tại.
+
+### `GET /notifications?page=0&size=20` — USER/ADMIN
+
+Trả `{"items":[{"id","accountId","type","title","body","createdAt","read"}],"page","size","total","unread"}`, mới nhất trước. `type` là một trong `TRANSFER_SENT`, `TRANSFER_RECEIVED`, `GRANT_RECEIVED`, `LOW_BALANCE`, `FEE_DUE`, `CREDIT_DEBT`, `SAVINGS_MATURING`. `size` tối đa 100, sai phân trang trả `400 INVALID_REQUEST`.
+
+### `POST /notifications/{id}/read`, `POST /notifications/read-all` — USER/ADMIN
+
+Response `204`. Đánh dấu đã đọc thông báo của chính mình; id của người khác hoặc không tồn tại trả `404 NOTIFICATION_NOT_FOUND`.
+
+### `GET|PUT /me/accounts/{id}/notification-settings` — USER/ADMIN
+
+`GET` trả `{"accountId","lowBalanceDong"}` (0 = tắt). `PUT` nhận `{"lowBalanceDong":50000}` là số nguyên từ 0 đến 1000000000000. Chỉ tài khoản Thanh toán: loại khác trả `400 NOTIFICATION_NOT_SUPPORTED`; số tiền sai trả `400 INVALID_AMOUNT`; tài khoản không thuộc về bạn trả `404 WALLET_NOT_FOUND`. Đặt ngưỡng sẽ kiểm tra ngay: nếu số dư đang thấp hơn ngưỡng, bạn nhận cảnh báo một lần.

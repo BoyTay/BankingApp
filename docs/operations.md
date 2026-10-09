@@ -37,3 +37,7 @@ docker compose ps
 `--single-transaction` giúp toàn bộ thao tác khôi phục thành công hoặc rollback khi có lỗi. Nếu `pg_restore` báo lỗi, kiểm tra nguyên nhân và giữ API dừng; chỉ khởi động lại sau khi đã xử lý xong. Bản sao lưu nên cùng phiên bản schema ứng dụng (Flyway) với image API sẽ khởi động.
 
 Tham khảo: [PostgreSQL pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html), [PostgreSQL pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html), [Docker Compose cp](https://docs.docker.com/reference/cli/docker/compose/cp/).
+
+## Email thông báo (Mailpit)
+
+Compose chạy thêm `mailpit` làm máy chủ SMTP thử nghiệm: mọi email của ứng dụng được giữ lại ở `http://localhost:8025` (chỉ mở trên `127.0.0.1`, không có xác thực) và không ra Internet. Biến môi trường: `NOTIFY_EMAIL_ENABLED` (mặc định `true` trong Compose, `false` khi chạy ngoài Compose), `NOTIFY_REMINDERS_ENABLED` (tác vụ nhắc nhở hằng ngày 00:15 UTC), `MAILPIT_PORT`. Mailpit không lưu dữ liệu qua lần khởi động lại và email gửi lỗi chỉ được ghi log; thông báo trong ứng dụng vẫn được lưu trong PostgreSQL. Để gửi email thật, đổi `MAIL_HOST`/`MAIL_PORT` sang máy chủ SMTP khác và bổ sung thông tin đăng nhập.

@@ -20,6 +20,8 @@ docker compose up --build -d
 
 Biểu phí minh họa: Thanh toán 5.000 VND/tháng, Tiết kiệm rút sớm 0,5% tiền gốc, Tín dụng 20.000 VND/năm. Phí định kỳ bắt đầu từ kỳ phí tiếp theo. `ACCOUNT_FEES_ENABLED` mặc định `true`; tác vụ UTC hằng ngày tạo và thu phí đến hạn. Thiếu số dư Thanh toán hoặc hạn mức Tín dụng thì phí ở trạng thái `DUE` để thử lại; người dùng vẫn đăng nhập được. `CHECKING_MONTHLY_FEE_DONG` và `CREDIT_ANNUAL_FEE_DONG` thay đổi mức phí cho kỳ chưa được tạo. Xem [quy tắc tài khoản và phí](docs/account-types.md).
 
+Thông báo giao dịch, cảnh báo số dư thấp và nhắc nhở hiện ở tab **Thông báo** và được gửi thành email vào Mailpit tại [http://localhost:8025](http://localhost:8025) (hộp thư thử nghiệm, không gửi ra ngoài).
+
 Mở [http://localhost:8080](http://localhost:8080) để dùng giao diện web. API ở `http://localhost:8080/api/v1`. Nếu cổng 8080 đã được sử dụng, đổi `API_PORT` trong `.env` rồi mở URL theo cổng mới. Compose chỉ công bố API trên máy đang chạy Docker.
 
 ```powershell

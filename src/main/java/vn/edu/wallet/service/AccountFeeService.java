@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.RequestChecks;
+import vn.edu.wallet.notify.LowBalanceMonitor;
 
 @Service
 public class AccountFeeService {
@@ -18,15 +19,18 @@ public class AccountFeeService {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
     private final AccountService accounts;
+    private final LowBalanceMonitor lowBalance;
     private final String configuredCheckingMonthlyFee;
     private final String configuredCreditAnnualFee;
 
     public AccountFeeService(JdbcTemplate db, WalletQueries wallets, AccountService accounts,
+            LowBalanceMonitor lowBalance,
             @Value("${account.fees.checking-monthly-dong:5000}") String configuredCheckingMonthlyFee,
             @Value("${account.fees.credit-annual-dong:20000}") String configuredCreditAnnualFee) {
         this.db = db;
         this.wallets = wallets;
         this.accounts = accounts;
+        this.lowBalance = lowBalance;
         this.configuredCheckingMonthlyFee = configuredCheckingMonthlyFee;
         this.configuredCreditAnnualFee = configuredCreditAnnualFee;
     }
@@ -89,6 +93,7 @@ public class AccountFeeService {
                     VALUES (?,?,?,?,?)
                     """, UUID.randomUUID(), fee.walletId(), fee.id(), -fee.amountDong(), after);
             db.update("UPDATE account_fees SET status='PAID',paid_at=now() WHERE id=?", fee.id());
+            lowBalance.check(fee.walletId());
             paid++;
         }
         return new RunResult(assessed, paid, true);
