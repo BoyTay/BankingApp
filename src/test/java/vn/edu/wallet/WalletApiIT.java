@@ -1072,6 +1072,51 @@ class WalletApiIT {
         assertEquals(2, notifications(a, "FEE_DUE"));
     }
 
+    @Test
+    void creditDebtReminderIsMonthlyAndStopsWhenRepaid() throws Exception {
+        Account owner = register("remind-credit");
+        Account administrator = admin();
+        UUID id = UUID.fromString(body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}")).path("accountId").asString());
+        assertEquals(201, request("POST", "/admin/credit-accounts/" + id + "/limit", administrator.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":100000}").statusCode());
+        LocalDate day = LocalDate.of(2026, 10, 7);
+        assertEquals(0, reminders.run(day)); // no debt yet
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":60000,\"description\":\"Minh hoa\"}")
+                .statusCode());
+        assertEquals(1, reminders.run(day));
+        assertEquals(0, reminders.run(day.plusDays(10))); // same month
+        assertEquals(1, reminders.run(day.plusMonths(1)));
+        assertEquals(2, notifications(owner, "CREDIT_DEBT"));
+        assertTrue(body(request("GET", "/notifications", owner.token(), null)).path("items").get(0)
+                .path("body").asString().contains("60.000"));
+
+        grant(administrator, owner, 60_000);
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/repayments", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\""
+                        + wallet(owner).path("walletId").asString() + "\",\"amountDong\":60000}").statusCode());
+        assertEquals(0, reminders.run(day.plusMonths(2))); // debt repaid
+    }
+
+    @Test
+    void savingsMaturityReminderFiresOnlyInsideNoticeWindowAndOnlyOnce() throws Exception {
+        Account owner = register("remind-savings");
+        grant(admin(), owner, 200_000);
+        UUID fundingId = UUID.fromString(wallet(owner).path("walletId").asString());
+        UUID id = UUID.fromString(body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"SAVINGS\","
+                        + "\"fundingAccountId\":\"" + fundingId + "\",\"amountDong\":200000}")).path("accountId").asString());
+        LocalDate maturity = LocalDate.of(2026, 12, 31);
+        db.update("UPDATE savings_accounts SET matures_on=? WHERE wallet_id=?", java.sql.Date.valueOf(maturity), id);
+        assertEquals(0, reminders.run(maturity.minusDays(4))); // outside the 3-day window
+        assertEquals(1, reminders.run(maturity.minusDays(3)));
+        assertEquals(0, reminders.run(maturity.minusDays(1))); // already reminded
+        assertEquals(1, notifications(owner, "SAVINGS_MATURING"));
+        assertTrue(body(request("GET", "/notifications", owner.token(), null)).path("items").get(0)
+                .path("body").asString().contains("2026-12-31"));
+    }
+
     private int notifications(Account account, String type) {
         return db.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND type=?",
                 Integer.class, account.userId(), type);
