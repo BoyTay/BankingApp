@@ -152,7 +152,7 @@
       <div class="panel" data-panel="expenses" hidden>
         <div class="two-columns">
           <div class="card form-card"><h2>Nhập khoản chi</h2><p class="muted">Tải CSV để thống kê chi tiêu. Số dư ví không thay đổi.</p><form id="import-form"><label>Tệp chi tiêu CSV<input name="file" type="file" accept=".csv,text/csv" required></label><div class="sample-links"><a href="/samples/chi-tieu-mau.csv" download>Tải tệp mẫu CSV</a></div><button class="primary" type="submit" id="preview-import">Xem trước khoản chi</button></form><p class="muted small" id="import-pending" hidden>Chưa rõ kết quả nhập. Thử lại đúng tệp và yêu cầu cũ để tránh nhập trùng.</p><button type="button" class="secondary" id="retry-import" hidden>Thử lại yêu cầu cũ</button></div>
-          <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div id="stats-result" class="stats-result"></div></div>
+          <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div class="chart-box stats-chart" id="stats-chart-box" hidden><canvas id="stats-chart" role="img" aria-label="Biểu đồ thống kê chi tiêu"></canvas></div><div id="stats-result" class="stats-result"></div></div>
         </div>
         <section class="card import-preview" id="import-preview" aria-labelledby="import-preview-heading" hidden>
           <div class="section-heading"><div><h2 id="import-preview-heading">Xem trước dữ liệu</h2><p id="import-summary" role="status" tabindex="-1"></p></div><button type="button" class="primary" id="confirm-import" hidden>Xác nhận nhập dữ liệu</button></div>
@@ -180,5 +180,12 @@
       </div>
     </section>
   </main>
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog">
+      <h3 id="confirm-dialog-title">Xác nhận</h3>
+      <p id="confirm-dialog-text"></p>
+      <div class="dialog-actions"><button type="submit" value="cancel" class="secondary">Hủy</button><button type="submit" value="ok" class="primary" id="confirm-dialog-ok">Xác nhận</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

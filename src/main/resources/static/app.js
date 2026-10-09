@@ -28,6 +28,20 @@ function iconNode(name, className = "icon icon-sm") {
   return svg;
 }
 
+// Styled replacement for window.confirm(); resolves true only when the user presses the confirm button.
+function askConfirm(text, { title = "Xác nhận", confirmLabel = "Xác nhận" } = {}) {
+  const dialog = $("confirm-dialog");
+  $("confirm-dialog-title").textContent = title;
+  $("confirm-dialog-text").textContent = text;
+  $("confirm-dialog-ok").textContent = confirmLabel;
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+    $("confirm-dialog-ok").focus();
+  });
+}
+
 // Light/dark theme: an explicit choice is stored; otherwise the system setting applies.
 function currentTheme() {
   return document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
@@ -37,6 +51,7 @@ $("theme-toggle").addEventListener("click", () => {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem("theme", next); } catch { /* private mode: keep for this page only */ }
   drawBalanceChart();
+  drawStatsChart();
 });
 
 async function request(path, options = {}) {
@@ -91,6 +106,7 @@ async function login(email, password) {
 function signOut(callApi = true) {
   stopNotificationPolling();
   destroyBalanceChart();
+  destroyStatsChart();
   const token = state.token;
   if (callApi && token) fetch(apiBase + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   state.token = null;
@@ -354,23 +370,26 @@ $("reload-history").addEventListener("click", () => loadHistory().catch((error) 
 $("prev-page").addEventListener("click", () => { state.page--; loadHistory().catch((error) => message(error.message, true)); });
 $("next-page").addEventListener("click", () => { state.page++; loadHistory().catch((error) => message(error.message, true)); });
 
-$("transfer-form").addEventListener("submit", (event) => {
+$("transfer-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.pendingTransfer) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong), sourceAccountId: data.sourceAccountId };
-  if (!confirm(`Chuyển ${money(payload.amountDong)} ₫ đến ví ${payload.recipientWalletCode}?`)) return;
+  let recipient;
+  try { recipient = await json(`/wallets/lookup/${encodeURIComponent(payload.recipientWalletCode)}`); }
+  catch (error) { message(error.message, true); return; }
+  if (!(await askConfirm(`Chuyển ${money(payload.amountDong)} ₫ đến ${recipient.displayName} (ví ${recipient.walletCode})?`, { title: "Xác nhận chuyển tiền", confirmLabel: "Chuyển tiền" }))) return;
   pending("transfer", payload);
   sendMoney("transfer", payload);
 });
 $("retry-transfer").addEventListener("click", () => { if (state.pendingTransfer) sendMoney("transfer", state.pendingTransfer); });
 
-$("grant-form").addEventListener("submit", (event) => {
+$("grant-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.pendingGrant) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong), reason: data.reason.trim() };
-  if (!confirm(`Cấp ${money(payload.amountDong)} ₫ cho ví ${payload.recipientWalletCode}?`)) return;
+  if (!(await askConfirm(`Cấp ${money(payload.amountDong)} ₫ cho ví ${payload.recipientWalletCode}?`))) return;
   pending("grant", payload);
   sendMoney("grant", payload);
 });
@@ -493,6 +512,48 @@ $("confirm-import").addEventListener("click", () => {
 });
 $("retry-import").addEventListener("click", sendImport);
 
+let statsChart = null;
+let statsData = null;
+
+function destroyStatsChart() {
+  statsChart?.destroy();
+  statsChart = null;
+  statsData = null;
+  $("stats-chart-box").hidden = true;
+  $("stats-result").replaceChildren();
+}
+
+function chartPalette() { return [1, 2, 3, 4, 5, 6, 7, 8].map((n) => cssVar(`--chart-${n}`) || "#4b7bdc"); }
+
+function drawStatsChart() {
+  statsChart?.destroy();
+  statsChart = null;
+  const box = $("stats-chart-box");
+  box.hidden = !statsData || !statsData.items.length || typeof Chart === "undefined";
+  if (box.hidden) return;
+  const byMonth = statsData.groupBy === "month";
+  const palette = chartPalette();
+  const values = statsData.items.map((item) => item.amountDong);
+  statsChart = new Chart($("stats-chart").getContext("2d"), {
+    type: byMonth ? "bar" : "doughnut",
+    data: {
+      labels: statsData.items.map((item) => item.key),
+      datasets: [{ data: values, backgroundColor: byMonth ? palette[0] : statsData.items.map((_, i) => palette[i % palette.length]), borderColor: cssVar("--surface"), borderWidth: byMonth ? 0 : 2, borderRadius: byMonth ? 6 : 0 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 450 },
+      cutout: byMonth ? undefined : "62%",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (item) => `${item.label}: ${money(item.parsed.y ?? item.parsed)} ₫` } } },
+      scales: byMonth ? {
+        x: { grid: { display: false }, ticks: { color: cssVar("--muted") } },
+        y: { grid: { color: cssVar("--border") }, ticks: { color: cssVar("--muted"), callback: (value) => money(value) } }
+      } : {}
+    }
+  });
+}
+
 $("stats-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
@@ -501,19 +562,36 @@ $("stats-form").addEventListener("submit", async (event) => {
     const result = await json(`/expense-stats?${params}`);
     const target = $("stats-result");
     target.replaceChildren();
+    statsData = result;
     const total = document.createElement("p");
+    total.className = "stats-total";
     total.textContent = `${result.totalCount} khoản chi · ${money(result.totalAmountDong)} ₫`;
     target.append(total);
-    for (const item of result.items) {
+    const palette = chartPalette();
+    result.items.forEach((item, index) => {
       const row = document.createElement("div");
       row.className = "stat-row";
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = result.groupBy === "month" ? palette[0] : palette[index % palette.length];
       const label = document.createElement("span");
-      const amount = document.createElement("strong");
+      label.className = "stat-label";
       label.textContent = item.key;
+      const share = document.createElement("span");
+      share.className = "muted small";
+      share.textContent = result.totalAmountDong > 0 ? `${Math.round((item.amountDong / result.totalAmountDong) * 100)}%` : "";
+      const amount = document.createElement("strong");
       amount.textContent = `${money(item.amountDong)} ₫`;
-      row.append(label, amount);
+      row.append(swatch, label, share, amount);
       target.append(row);
+    });
+    if (!result.items.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Không có khoản chi nào trong khoảng ngày này.";
+      target.append(empty);
     }
+    drawStatsChart();
   } catch (error) { message(error.message, true); }
 });
 
@@ -620,22 +698,57 @@ function renderAccountList() {
     button.className = "account-tile";
     button.dataset.type = account.accountType;
     button.setAttribute("aria-pressed", String(account.accountId === state.selectedAccountId));
+    const head = document.createElement("div");
+    head.className = "tile-head";
     const title = document.createElement("strong");
     title.textContent = `${accountNames[account.accountType]}${account.isDefault ? " · mặc định" : ""}`;
+    head.append(title, iconNode({ CHECKING: "wallet", SAVINGS: "shield", CREDIT: "card" }[account.accountType] || "wallet", "icon tile-icon"));
     const code = document.createElement("span");
     code.textContent = account.accountCode;
     const amount = document.createElement("b");
     amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(account.balanceDong === 0 ? 0 : -account.balanceDong) : money(account.balanceDong)} ₫`;
     const status = document.createElement("small");
     status.textContent = account.status === "ACTIVE" ? "Đang hoạt động" : "Đã đóng";
-    button.append(title, code, amount, status);
+    button.append(head, code, amount, status);
+    const extra = state.accountInfo?.[account.accountId];
+    if (extra && account.accountType === "CREDIT" && extra.limitDong > 0) {
+      const used = Math.min(100, Math.round((extra.debtDong / extra.limitDong) * 100));
+      const bar = document.createElement("div");
+      bar.className = `meter${used >= 90 ? " danger" : used >= 70 ? " warn" : ""}`;
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-label", "Hạn mức tín dụng đã dùng");
+      bar.setAttribute("aria-valuenow", String(used));
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      const fill = document.createElement("span");
+      fill.style.width = `${used}%`;
+      bar.append(fill);
+      const note = document.createElement("small");
+      note.textContent = `Đã dùng ${money(extra.debtDong)} / ${money(extra.limitDong)} ₫`;
+      button.insertBefore(bar, status);
+      button.insertBefore(note, status);
+    } else if (extra && account.accountType === "SAVINGS") {
+      const note = document.createElement("small");
+      note.textContent = `Đáo hạn ${extra.maturesOn} · lãi ${extra.annualRateBps / 100}%/năm`;
+      button.insertBefore(note, status);
+    }
     button.addEventListener("click", () => selectAccount(account.accountId).catch((error) => message(error.message, true)));
     target.append(button);
   }
 }
 
+async function loadAccountInfo() {
+  const info = {};
+  await Promise.all(state.accounts.filter((account) => account.status === "ACTIVE" && account.accountType !== "CHECKING").map(async (account) => {
+    const kind = account.accountType === "CREDIT" ? "credit" : "savings";
+    try { info[account.accountId] = await json(`/me/accounts/${account.accountId}/${kind}`); } catch { /* the tile still renders without the extra line */ }
+  }));
+  state.accountInfo = info;
+}
+
 async function loadAccounts() {
   state.accounts = await json("/me/accounts");
+  await loadAccountInfo();
   renderAccountSelectors();
   renderAccountList();
   if (state.selectedAccountId) await selectAccount(state.selectedAccountId);
@@ -720,36 +833,36 @@ $("account-open-form").addEventListener("submit", async (event) => {
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), type: data.type };
   if (data.type === "SAVINGS") { payload.fundingAccountId = data.fundingAccountId; payload.amountDong = Number(data.amountDong); }
-  if (!confirm(`Mở tài khoản ${accountNames[data.type]}? ${$("account-open-terms").textContent}`)) return;
+  if (!(await askConfirm(`Mở tài khoản ${accountNames[data.type]}? ${$("account-open-terms").textContent}`))) return;
   await accountAction("/me/accounts", payload, "Đã mở tài khoản.");
 });
 $("savings-withdraw-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!confirm("Tất toán khoản tiết kiệm? Nếu trước hạn, phí là 0,5% tiền gốc và không hưởng lãi.")) return;
+  if (!(await askConfirm("Tất toán khoản tiết kiệm? Nếu trước hạn, phí là 0,5% tiền gốc và không hưởng lãi."))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/savings/withdraw`, { requestKey: crypto.randomUUID() }, "Đã tất toán tiết kiệm.");
 });
 $("credit-spend-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), amountDong: Number(data.amountDong), description: data.description.trim() };
-  if (!confirm(`Ghi khoản sử dụng tín dụng ${money(payload.amountDong)} ₫?`)) return;
+  if (!(await askConfirm(`Ghi khoản sử dụng tín dụng ${money(payload.amountDong)} ₫?`))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/credit/charges`, payload, "Đã ghi khoản sử dụng hạn mức.");
 });
 $("credit-repay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), sourceAccountId: data.sourceAccountId, amountDong: Number(data.amountDong) };
-  if (!confirm(`Hoàn trả ${money(payload.amountDong)} ₫ từ tài khoản Thanh toán?`)) return;
+  if (!(await askConfirm(`Hoàn trả ${money(payload.amountDong)} ₫ từ tài khoản Thanh toán?`))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/credit/repayments`, payload, "Đã hoàn trả dư nợ.");
 });
 $("close-account").addEventListener("click", async () => {
-  if (!confirm("Đóng tài khoản đã tất toán? Tài khoản đã đóng không thể mở lại.")) return;
+  if (!(await askConfirm("Đóng tài khoản đã tất toán? Tài khoản đã đóng không thể mở lại."))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/close`, { requestKey: crypto.randomUUID() }, "Đã đóng tài khoản.");
 });
 $("credit-limit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
-  if (!confirm(`Đặt hạn mức ${money(Number(data.limitDong))} ₫ cho tài khoản này?`)) return;
+  if (!(await askConfirm(`Đặt hạn mức ${money(Number(data.limitDong))} ₫ cho tài khoản này?`))) return;
   try {
     await submitJson(`/admin/credit-accounts/${data.accountId.trim()}/limit`, { requestKey: crypto.randomUUID(), limitDong: Number(data.limitDong) });
     message("Đã cập nhật hạn mức tín dụng.");
@@ -761,6 +874,15 @@ $("history-account").addEventListener("change", () => { state.page = 0; loadHist
 const notificationState = { page: 0, totalPages: 0, timer: null };
 const notificationLook = { TRANSFER_SENT: ["up", "neg"], TRANSFER_RECEIVED: ["down", "pos"], GRANT_RECEIVED: ["down", "pos"], LOW_BALANCE: ["bell", "warn"], FEE_DUE: ["file", "warn"], CREDIT_DEBT: ["card", "neg"], SAVINGS_MATURING: ["history", "info"] };
 const notificationTypes = { TRANSFER_SENT: "Chuyển tiền", TRANSFER_RECEIVED: "Nhận tiền", GRANT_RECEIVED: "Được cấp tiền", LOW_BALANCE: "Số dư thấp", FEE_DUE: "Phí chưa thu", CREDIT_DEBT: "Nhắc nợ", SAVINGS_MATURING: "Tiết kiệm đáo hạn" };
+
+function dayLabel(value) {
+  const date = new Date(value);
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((startOf(new Date()) - startOf(date)) / 86400000);
+  if (diff === 0) return "Hôm nay";
+  if (diff === 1) return "Hôm qua";
+  return date.toLocaleDateString("vi-VN");
+}
 
 function setUnread(count) {
   $("kpi-unread").textContent = String(count);
@@ -793,7 +915,16 @@ async function loadNotifications() {
   const list = $("notification-list");
   list.replaceChildren();
   $("notification-empty").hidden = page.items.length > 0;
+  let lastDay = "";
   for (const item of page.items) {
+    const day = dayLabel(item.createdAt);
+    if (day !== lastDay) {
+      const heading = document.createElement("li");
+      heading.className = "day-heading";
+      heading.textContent = day;
+      list.append(heading);
+      lastDay = day;
+    }
     const row = document.createElement("li");
     row.className = item.read ? "read" : "unread";
     const [iconName, tone] = notificationLook[item.type] || ["bell", "info"];
