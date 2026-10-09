@@ -6,13 +6,38 @@ const state = { token: null, user: null, wallet: null, accounts: [], selectedAcc
 const money = (value) => new Intl.NumberFormat("vi-VN").format(value ?? 0);
 const dateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
+let noticeTimer = null;
 function message(value, error = false) {
   const notice = $("notice");
+  clearTimeout(noticeTimer);
   notice.textContent = value;
   notice.classList.toggle("error", error);
   notice.hidden = !value;
-  if (value) notice.scrollIntoView({ block: "nearest" });
+  // Errors stay until the next action; confirmations fade out on their own.
+  if (value && !error) noticeTimer = setTimeout(() => { notice.hidden = true; }, 6000);
 }
+
+function iconNode(name, className = "icon icon-sm") {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", className);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+// Light/dark theme: an explicit choice is stored; otherwise the system setting applies.
+function currentTheme() {
+  return document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+$("theme-toggle").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch { /* private mode: keep for this page only */ }
+  drawBalanceChart();
+});
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -56,6 +81,7 @@ async function login(email, password) {
   $("workspace").hidden = false;
   $("user-actions").hidden = false;
   $("user-name").textContent = data.user.displayName;
+  $("user-avatar").textContent = (data.user.displayName.trim()[0] || "?").toUpperCase();
   $("admin-tab").hidden = data.user.role !== "ADMIN";
   selectTab("overview");
   startNotificationPolling();
@@ -64,6 +90,7 @@ async function login(email, password) {
 
 function signOut(callApi = true) {
   stopNotificationPolling();
+  destroyBalanceChart();
   const token = state.token;
   if (callApi && token) fetch(apiBase + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   state.token = null;
@@ -126,7 +153,15 @@ function renderTransfers(target, items, includeBalance) {
     const row = document.createElement("tr");
     const incoming = transfer.direction === "INCOMING";
     cell(row, dateTime(transfer.createdAt));
-    cell(row, incoming ? "Nhận tiền" : "Chuyển tiền");
+    const typeCell = document.createElement("td");
+    const type = document.createElement("span");
+    type.className = "tx-type";
+    const badgeIcon = document.createElement("span");
+    badgeIcon.className = `tx-icon ${incoming ? "tx-in" : "tx-out"}`;
+    badgeIcon.append(iconNode(incoming ? "down" : "up"));
+    type.append(badgeIcon, document.createTextNode(incoming ? "Nhận tiền" : "Chuyển tiền"));
+    typeCell.append(type);
+    row.append(typeCell);
     cell(row, incoming ? transfer.senderWalletCode : transfer.recipientWalletCode);
     cell(row, `${incoming ? "+" : "−"}${money(transfer.amountDong)} ₫`, `numeric ${incoming ? "positive" : "negative"}`);
     if (includeBalance) cell(row, `${money(transfer.myBalanceAfterDong)} ₫`, "numeric");
@@ -134,15 +169,95 @@ function renderTransfers(target, items, includeBalance) {
   }
 }
 
+let balanceChart = null;
+let balancePoints = [];
+
+function destroyBalanceChart() {
+  balanceChart?.destroy();
+  balanceChart = null;
+  balancePoints = [];
+}
+
+function shortDateTime(value) {
+  const date = new Date(value);
+  const two = (n) => String(n).padStart(2, "0");
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+function withAlpha(hex, alpha) {
+  const value = /^#([0-9a-f]{6})$/i.exec(hex)?.[1];
+  if (!value) return hex;
+  const channel = (start) => parseInt(value.slice(start, start + 2), 16);
+  return `rgba(${channel(0)}, ${channel(2)}, ${channel(4)}, ${alpha})`;
+}
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function drawBalanceChart() {
+  const canvas = $("balance-chart");
+  const empty = $("balance-chart-empty");
+  balanceChart?.destroy();
+  balanceChart = null;
+  empty.hidden = balancePoints.length > 0;
+  canvas.hidden = balancePoints.length === 0;
+  if (!balancePoints.length || typeof Chart === "undefined") return;
+  const color = cssVar("--primary") || "#162b53";
+  const context = canvas.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.clientHeight || 240);
+  gradient.addColorStop(0, withAlpha(color, 0.32));
+  gradient.addColorStop(1, withAlpha(color, 0));
+  balanceChart = new Chart(context, {
+    type: "line",
+    data: {
+      labels: balancePoints.map((point) => point.label),
+      datasets: [{ data: balancePoints.map((point) => point.balance), borderColor: color, backgroundColor: gradient, fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2.5 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 450 },
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (item) => `Số dư: ${money(item.parsed.y)} ₫` } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: cssVar("--muted"), maxTicksLimit: 6 } },
+        y: { grid: { color: cssVar("--border") }, ticks: { color: cssVar("--muted"), callback: (value) => money(value) } }
+      }
+    }
+  });
+}
+
+function renderOverviewStats(items, totalItems) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  let inflow = 0;
+  let outflow = 0;
+  for (const transfer of items) {
+    if (new Date(transfer.createdAt) < monthStart) continue;
+    if (transfer.direction === "INCOMING") inflow += transfer.amountDong; else outflow += transfer.amountDong;
+  }
+  // Only the latest 100 transfers are loaded; flag the figure when the month may extend past them.
+  const partial = totalItems > items.length && items.length > 0 && new Date(items[items.length - 1].createdAt) >= monthStart;
+  $("kpi-in").textContent = `${partial ? "≥ " : ""}${money(inflow)} ₫`;
+  $("kpi-out").textContent = `${partial ? "≥ " : ""}${money(outflow)} ₫`;
+  balancePoints = items.slice(0, 20).reverse().map((transfer) => ({
+    label: shortDateTime(transfer.createdAt),
+    balance: transfer.myBalanceAfterDong
+  }));
+  drawBalanceChart();
+}
+
 async function refresh() {
   try {
-    const [wallet, recent, accounts] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=5"), json("/me/accounts")]);
+    const [wallet, recent, accounts] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=100"), json("/me/accounts")]);
     state.wallet = wallet;
     state.accounts = accounts;
     renderAccountSelectors();
     $("balance").textContent = money(wallet.balanceDong);
     $("wallet-code").textContent = wallet.walletCode;
-    renderTransfers($("recent-body"), recent.items, false);
+    $("kpi-accounts").textContent = String(accounts.filter((account) => account.status === "ACTIVE").length);
+    renderTransfers($("recent-body"), recent.items.slice(0, 5), false);
+    renderOverviewStats(recent.items, recent.totalItems);
+    refreshUnread().catch(() => {});
   } catch (error) { message(error.message, true); }
 }
 
@@ -503,13 +618,14 @@ function renderAccountList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "account-tile";
+    button.dataset.type = account.accountType;
     button.setAttribute("aria-pressed", String(account.accountId === state.selectedAccountId));
     const title = document.createElement("strong");
     title.textContent = `${accountNames[account.accountType]}${account.isDefault ? " · mặc định" : ""}`;
     const code = document.createElement("span");
     code.textContent = account.accountCode;
     const amount = document.createElement("b");
-    amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(-account.balanceDong) : money(account.balanceDong)} ₫`;
+    amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(account.balanceDong === 0 ? 0 : -account.balanceDong) : money(account.balanceDong)} ₫`;
     const status = document.createElement("small");
     status.textContent = account.status === "ACTIVE" ? "Đang hoạt động" : "Đã đóng";
     button.append(title, code, amount, status);
@@ -643,9 +759,11 @@ $("history-account").addEventListener("change", () => { state.page = 0; loadHist
 
 // --- Thông báo (Observer: máy chủ đẩy sự kiện vào bảng thông báo, giao diện chỉ đọc) ---
 const notificationState = { page: 0, totalPages: 0, timer: null };
+const notificationLook = { TRANSFER_SENT: ["up", "neg"], TRANSFER_RECEIVED: ["down", "pos"], GRANT_RECEIVED: ["down", "pos"], LOW_BALANCE: ["bell", "warn"], FEE_DUE: ["file", "warn"], CREDIT_DEBT: ["card", "neg"], SAVINGS_MATURING: ["history", "info"] };
 const notificationTypes = { TRANSFER_SENT: "Chuyển tiền", TRANSFER_RECEIVED: "Nhận tiền", GRANT_RECEIVED: "Được cấp tiền", LOW_BALANCE: "Số dư thấp", FEE_DUE: "Phí chưa thu", CREDIT_DEBT: "Nhắc nợ", SAVINGS_MATURING: "Tiết kiệm đáo hạn" };
 
 function setUnread(count) {
+  $("kpi-unread").textContent = String(count);
   $("unread-badge").textContent = count > 99 ? "99+" : String(count);
   $("unread-badge").hidden = count === 0;
 }
@@ -678,13 +796,20 @@ async function loadNotifications() {
   for (const item of page.items) {
     const row = document.createElement("li");
     row.className = item.read ? "read" : "unread";
+    const [iconName, tone] = notificationLook[item.type] || ["bell", "info"];
+    const badge = document.createElement("span");
+    badge.className = `notif-icon tone-${tone}`;
+    badge.append(iconNode(iconName, "icon"));
+    const main = document.createElement("div");
+    main.className = "notif-main";
     const title = document.createElement("strong");
-    title.textContent = `${notificationTypes[item.type] || "Thông báo"} · ${item.title}`;
+    title.textContent = item.title;
     const body = document.createElement("p");
     body.textContent = item.body;
     const time = document.createElement("small");
-    time.textContent = dateTime(item.createdAt);
-    row.append(title, body, time);
+    time.textContent = `${notificationTypes[item.type] || "Thông báo"} · ${dateTime(item.createdAt)}`;
+    main.append(title, body, time);
+    row.append(badge, main);
     if (!item.read) {
       const mark = document.createElement("button");
       mark.type = "button";
@@ -693,7 +818,7 @@ async function loadNotifications() {
       mark.addEventListener("click", async () => {
         try { await json(`/notifications/${item.id}/read`, { method: "POST" }); await loadNotifications(); } catch (error) { message(error.message, true); }
       });
-      row.append(mark);
+      main.append(mark);
     }
     list.append(row);
   }
