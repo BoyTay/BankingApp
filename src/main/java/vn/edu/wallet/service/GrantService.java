@@ -11,17 +11,22 @@ import vn.edu.wallet.api.ApiDtos;
 import vn.edu.wallet.api.ApiException;
 import vn.edu.wallet.api.RequestChecks;
 import vn.edu.wallet.account.AccountPolicies;
+import vn.edu.wallet.notify.EventSubject;
+import vn.edu.wallet.notify.WalletEvent;
 
 @Service
 public class GrantService {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
     private final AccountPolicies accountPolicies;
+    private final EventSubject events;
 
-    public GrantService(JdbcTemplate db, WalletQueries wallets, AccountPolicies accountPolicies) {
+    public GrantService(JdbcTemplate db, WalletQueries wallets, AccountPolicies accountPolicies,
+                        EventSubject events) {
         this.db = db;
         this.wallets = wallets;
         this.accountPolicies = accountPolicies;
+        this.events = events;
     }
 
     @Transactional
@@ -82,6 +87,8 @@ public class GrantService {
                 UUID.randomUUID(), wallet.id(), grantId, amount, after);
         Instant at = db.queryForObject("SELECT created_at FROM admin_grants WHERE id=?",
                 (rs, row) -> rs.getTimestamp(1).toInstant(), grantId);
+        events.publish(new WalletEvent.GrantReceived(wallet.ownerId(), wallet.id(), amount, after,
+                input.reason().trim()));
         return new GrantResult(new ApiDtos.GrantView(grantId, input.requestKey(), adminId, wallet.code(), amount, after,
                 input.reason().trim(), at), false);
     }

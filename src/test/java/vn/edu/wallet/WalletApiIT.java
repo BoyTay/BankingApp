@@ -992,6 +992,31 @@ class WalletApiIT {
         return new Account(id, code, body(login).path("accessToken").asString(), password, "ADMIN");
     }
 
+    @Test
+    void transfersNotifyBothSidesOnlyAfterCommitAndNotOnReplay() throws Exception {
+        Account a = register("notify-a");
+        Account b = register("notify-b");
+        grant(admin(), a, 100);
+        assertEquals(1, notifications(a, "GRANT_RECEIVED"));
+        UUID key = UUID.randomUUID();
+        assertEquals(201, transfer(a, b, 30, key).statusCode());
+        assertEquals(200, transfer(a, b, 30, key).statusCode()); // idempotent replay
+        assertEquals(1, notifications(a, "TRANSFER_SENT"));
+        assertEquals(1, notifications(b, "TRANSFER_RECEIVED"));
+        assertEquals(0, notifications(b, "TRANSFER_SENT"));
+
+        FAIL_AFTER_DEBIT.set(true);
+        assertEquals(500, transfer(a, b, 20, UUID.randomUUID()).statusCode());
+        FAIL_AFTER_DEBIT.set(false);
+        assertEquals(1, notifications(a, "TRANSFER_SENT"));
+        assertEquals(1, notifications(b, "TRANSFER_RECEIVED"));
+    }
+
+    private int notifications(Account account, String type) {
+        return db.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND type=?",
+                Integer.class, account.userId(), type);
+    }
+
     private void grant(Account admin, Account to, long amount) throws Exception {
         HttpResponse<String> response = grantRaw(admin, to.walletCode(), Long.toString(amount),
                 "Test funding", UUID.randomUUID());
