@@ -96,7 +96,10 @@ function selectTab(name) {
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.hidden = panel.dataset.panel !== name);
   message("");
   if (name === "history") loadHistory().catch((error) => message(error.message, true));
-  if (name === "notifications") loadNotifications().catch((error) => message(error.message, true));
+  if (name === "notifications") {
+    loadNotifications().catch((error) => message(error.message, true));
+    loadLowBalanceSetting().catch((error) => message(error.message, true));
+  }
   if (name === "accounts") loadAccounts().catch((error) => message(error.message, true));
 }
 
@@ -472,6 +475,8 @@ function renderAccountSelectors() {
   const checking = state.accounts.filter((account) => account.accountType === "CHECKING");
   fillSelect($("transfer-source"), checking);
   fillSelect($("savings-funding"), checking);
+  fillSelect($("low-balance-account"), checking.filter((account) => account.status === "ACTIVE"));
+  loadLowBalanceSetting().catch(() => {});
   fillSelect($("credit-repay-source"), checking);
   fillSelect($("history-account"), state.accounts, true);
   fillSelect($("statement-account"), state.accounts, true);
@@ -525,7 +530,6 @@ async function selectAccount(accountId) {
   renderAccountList();
   const account = state.accounts.find((item) => item.accountId === accountId);
   if (!account) return;
-  $("low-balance-form").hidden = true;
   $("savings-withdraw-form").hidden = true;
   $("credit-spend-form").hidden = true;
   $("credit-repay-form").hidden = true;
@@ -549,14 +553,7 @@ async function selectAccount(accountId) {
       line.textContent = `${dateTime(item.createdAt)} · ${item.type === "CHARGE" ? "Sử dụng" : item.type === "REPAYMENT" ? "Hoàn trả" : "Phí"} ${money(item.amountDong)} ₫ · dư nợ ${money(item.debtAfterDong)} ₫ · ${item.description}`;
       $("credit-activity").append(line);
     }
-  } else {
-    detail += `Số dư ${money(account.balanceDong)} ₫.`;
-    if (account.accountType === "CHECKING" && account.status === "ACTIVE") {
-      const settings = await json(`/me/accounts/${accountId}/notification-settings`);
-      $("low-balance-form").elements.lowBalanceDong.value = settings.lowBalanceDong;
-      $("low-balance-form").hidden = false;
-    }
-  }
+  } else detail += `Số dư ${money(account.balanceDong)} ₫.`;
   $("account-detail").textContent = detail;
   const fees = await json(`/me/accounts/${accountId}/fees`);
   $("account-fees").replaceChildren();
@@ -711,12 +708,25 @@ $("read-all").addEventListener("click", async () => {
 $("notif-prev").addEventListener("click", () => { notificationState.page--; loadNotifications().catch((error) => message(error.message, true)); });
 $("notif-next").addEventListener("click", () => { notificationState.page++; loadNotifications().catch((error) => message(error.message, true)); });
 
+async function loadLowBalanceSetting() {
+  const accountId = $("low-balance-account").value;
+  const input = $("low-balance-form").elements.lowBalanceDong;
+  if (!accountId) { input.value = ""; return; }
+  const settings = await json(`/me/accounts/${accountId}/notification-settings`);
+  if ($("low-balance-account").value === accountId) input.value = settings.lowBalanceDong;
+}
+
+$("low-balance-account").addEventListener("change", () => loadLowBalanceSetting().catch((error) => message(error.message, true)));
+
 $("low-balance-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
+    const accountId = $("low-balance-account").value;
+    if (!accountId) { message("Chưa có tài khoản Thanh toán.", true); return; }
     const value = Number($("low-balance-form").elements.lowBalanceDong.value);
-    await json(`/me/accounts/${state.selectedAccountId}/notification-settings`, { method: "PUT", body: JSON.stringify({ lowBalanceDong: value }) });
+    await json(`/me/accounts/${accountId}/notification-settings`, { method: "PUT", body: JSON.stringify({ lowBalanceDong: value }) });
     message(value === 0 ? "Đã tắt cảnh báo số dư thấp." : `Sẽ cảnh báo khi số dư dưới ${money(value)} ₫.`);
     refreshUnread().catch(() => {});
+    await loadNotifications();
   } catch (error) { message(error.message, true); }
 });
