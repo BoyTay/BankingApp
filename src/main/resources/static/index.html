@@ -6,13 +6,37 @@
   <title>Internal Wallet</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23162b53'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-family='Arial' font-size='43' font-weight='bold' fill='white'%3EW%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/app.css">
-  <link rel="stylesheet" href="/accounts.css">
+  <script>try{var t=localStorage.getItem("theme");if(t==="dark"||t==="light")document.documentElement.dataset.theme=t}catch(e){}</script>
+  <script src="/vendor/chart.umd.min.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-5h4v5"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20"/><path d="M6 15h4"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-pie" viewBox="0 0 24 24"><path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M8 13h8M8 17h6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+</svg>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Internal Wallet, trang chủ"><span class="brand-mark">W</span><span>Internal Wallet</span></a>
-    <div class="user-actions" id="user-actions" hidden><span id="user-name"></span><button type="button" class="text-button" id="logout">Đăng xuất</button></div>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">W</span><span>Internal Wallet</span></a>
+    <div class="topbar-actions">
+      <button type="button" class="icon-button" id="theme-toggle" aria-label="Đổi giao diện sáng/tối" title="Đổi giao diện sáng/tối"><svg class="icon theme-moon" aria-hidden="true"><use href="#i-moon"/></svg><svg class="icon theme-sun" aria-hidden="true"><use href="#i-sun"/></svg></button>
+      <div class="user-actions" id="user-actions" hidden><span class="user-chip"><span class="avatar" id="user-avatar" aria-hidden="true"></span><span id="user-name"></span></span><button type="button" class="icon-button" id="logout" aria-label="Đăng xuất" title="Đăng xuất"><svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg></button></div>
+    </div>
   </header>
 
   <main>
@@ -21,6 +45,11 @@
         <span class="eyebrow">VÍ ĐIỆN TỬ NỘI BỘ</span>
         <h1>Quản lý dòng tiền<br>rõ ràng, gọn gàng.</h1>
         <p>Đăng nhập để xem số dư, chuyển tiền, theo dõi giao dịch và thống kê chi tiêu trên một màn hình.</p>
+        <ul class="feature-list">
+          <li><span class="icon-wrap"><svg class="icon" aria-hidden="true"><use href="#i-zap"/></svg></span>Chuyển tiền tức thì, chống gửi trùng</li>
+          <li><span class="icon-wrap"><svg class="icon" aria-hidden="true"><use href="#i-card"/></svg></span>Nhiều loại tài khoản: thanh toán, tiết kiệm, tín dụng</li>
+          <li><span class="icon-wrap"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg></span>Thông báo và cảnh báo số dư thấp theo thời gian thực</li>
+        </ul>
         <div class="intro-note"><span class="note-dot"></span> Chỉ sử dụng trên máy cá nhân hoặc qua kết nối HTTPS tin cậy.</div>
       </div>
       <div class="card auth-card">
@@ -46,21 +75,35 @@
     </section>
 
     <section class="workspace" id="workspace" hidden>
-      <div class="page-heading"><div><span class="eyebrow">TỔNG QUAN TÀI KHOẢN</span><h1>Ví của bạn</h1><p class="muted">Theo dõi và quản lý giao dịch của bạn.</p></div><button type="button" class="secondary" id="refresh">Làm mới</button></div>
-      <nav class="tabs" aria-label="Chức năng ví">
-        <button type="button" data-tab="overview" class="active">Tổng quan</button>
-        <button type="button" data-tab="accounts">Tài khoản</button>
-        <button type="button" data-tab="notifications">Thông báo <span class="badge" id="unread-badge" hidden>0</span></button>
-        <button type="button" data-tab="transfer">Chuyển tiền</button>
-        <button type="button" data-tab="history">Lịch sử</button>
-        <button type="button" data-tab="expenses">Chi tiêu</button>
-        <button type="button" data-tab="statements">Sao kê</button>
-        <button type="button" data-tab="admin" id="admin-tab" hidden>Quản trị</button>
+      <nav class="sidebar" aria-label="Chức năng ví">
+        <button type="button" data-tab="overview" class="active"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg><span>Tổng quan</span></button>
+        <button type="button" data-tab="accounts"><svg class="icon" aria-hidden="true"><use href="#i-card"/></svg><span>Tài khoản</span></button>
+        <button type="button" data-tab="transfer"><svg class="icon" aria-hidden="true"><use href="#i-send"/></svg><span>Chuyển tiền</span></button>
+        <button type="button" data-tab="history"><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg><span>Lịch sử</span></button>
+        <button type="button" data-tab="notifications"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg><span>Thông báo</span> <span class="badge" id="unread-badge" hidden>0</span></button>
+        <button type="button" data-tab="expenses"><svg class="icon" aria-hidden="true"><use href="#i-pie"/></svg><span>Chi tiêu</span></button>
+        <button type="button" data-tab="statements"><svg class="icon" aria-hidden="true"><use href="#i-file"/></svg><span>Sao kê</span></button>
+        <button type="button" data-tab="admin" id="admin-tab" hidden><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span>Quản trị</span></button>
       </nav>
+      <div class="content">
+      <div class="page-heading"><div><span class="eyebrow">TỔNG QUAN TÀI KHOẢN</span><h1>Ví của bạn</h1><p class="muted">Theo dõi và quản lý giao dịch của bạn.</p></div><button type="button" class="secondary" id="refresh"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-refresh"/></svg> Làm mới</button></div>
       <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
       <div class="panel" data-panel="overview">
-        <div class="overview-grid"><article class="balance-card"><span>Số dư khả dụng</span><strong id="balance">—</strong><span>VND</span></article><article class="card wallet-card"><span class="eyebrow">MÃ VÍ CỦA BẠN</span><strong id="wallet-code">—</strong><button class="text-button" type="button" id="copy-wallet">Sao chép mã ví</button></article></div>
+        <div class="overview-grid">
+          <article class="balance-card"><span>Số dư khả dụng</span><strong><span id="balance">—</span> <small>VND</small></strong><div class="card-code"><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg><span>Ví chính</span></div></article>
+          <article class="card wallet-card"><span class="eyebrow">MÃ VÍ CỦA BẠN</span><strong id="wallet-code">—</strong><button class="secondary" type="button" id="copy-wallet"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-copy"/></svg> Sao chép mã ví</button><p class="muted small">Chia sẻ mã này để người khác chuyển tiền cho bạn.</p></article>
+        </div>
+        <div class="kpi-row">
+          <article class="card kpi pos"><div class="kpi-head"><span class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="#i-down"/></svg></span>Tiền vào tháng này</div><strong id="kpi-in">—</strong></article>
+          <article class="card kpi neg"><div class="kpi-head"><span class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></span>Tiền ra tháng này</div><strong id="kpi-out">—</strong></article>
+          <article class="card kpi warn"><div class="kpi-head"><span class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg></span>Thông báo chưa đọc</div><strong id="kpi-unread">—</strong></article>
+          <article class="card kpi"><div class="kpi-head"><span class="kpi-icon"><svg class="icon" aria-hidden="true"><use href="#i-card"/></svg></span>Số tài khoản</div><strong id="kpi-accounts">—</strong></article>
+        </div>
+        <section class="card chart-card" aria-labelledby="balance-chart-title">
+          <div class="section-heading"><h2 id="balance-chart-title">Biến động số dư</h2><span class="muted small">20 giao dịch gần nhất</span></div>
+          <div class="chart-box"><canvas id="balance-chart" role="img" aria-label="Biểu đồ đường biến động số dư theo các giao dịch gần nhất"></canvas><div class="chart-empty" id="balance-chart-empty" hidden>Chưa có giao dịch để vẽ biểu đồ.</div></div>
+        </section>
         <div class="section-heading"><h2>Giao dịch gần đây</h2><button class="text-button" type="button" data-go="history">Xem tất cả</button></div>
         <div class="card table-wrap"><table><thead><tr><th>Thời gian</th><th>Loại</th><th>Ví đối ứng</th><th class="numeric">Số tiền</th></tr></thead><tbody id="recent-body"></tbody></table></div>
       </div>
@@ -109,7 +152,7 @@
       <div class="panel" data-panel="expenses" hidden>
         <div class="two-columns">
           <div class="card form-card"><h2>Nhập khoản chi</h2><p class="muted">Tải CSV để thống kê chi tiêu. Số dư ví không thay đổi.</p><form id="import-form"><label>Tệp chi tiêu CSV<input name="file" type="file" accept=".csv,text/csv" required></label><div class="sample-links"><a href="/samples/chi-tieu-mau.csv" download>Tải tệp mẫu CSV</a></div><button class="primary" type="submit" id="preview-import">Xem trước khoản chi</button></form><p class="muted small" id="import-pending" hidden>Chưa rõ kết quả nhập. Thử lại đúng tệp và yêu cầu cũ để tránh nhập trùng.</p><button type="button" class="secondary" id="retry-import" hidden>Thử lại yêu cầu cũ</button></div>
-          <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div id="stats-result" class="stats-result"></div></div>
+          <div class="card form-card"><h2>Thống kê chi tiêu</h2><form id="stats-form"><div class="date-row"><label>Từ ngày<input name="from" type="date" required></label><label>Đến ngày<input name="to" type="date" required></label></div><label>Nhóm theo<select name="groupBy"><option value="category">Danh mục</option><option value="month">Tháng</option></select></label><button class="secondary" type="submit">Xem thống kê</button></form><div class="chart-box stats-chart" id="stats-chart-box" hidden><canvas id="stats-chart" role="img" aria-label="Biểu đồ thống kê chi tiêu"></canvas></div><div id="stats-result" class="stats-result"></div></div>
         </div>
         <section class="card import-preview" id="import-preview" aria-labelledby="import-preview-heading" hidden>
           <div class="section-heading"><div><h2 id="import-preview-heading">Xem trước dữ liệu</h2><p id="import-summary" role="status" tabindex="-1"></p></div><button type="button" class="primary" id="confirm-import" hidden>Xác nhận nhập dữ liệu</button></div>
@@ -134,7 +177,15 @@
           </div>
         </section>
       </div>
+      </div>
     </section>
   </main>
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-dialog-title">
+    <form method="dialog">
+      <h3 id="confirm-dialog-title">Xác nhận</h3>
+      <p id="confirm-dialog-text"></p>
+      <div class="dialog-actions"><button type="submit" value="cancel" class="secondary">Hủy</button><button type="submit" value="ok" class="primary" id="confirm-dialog-ok">Xác nhận</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

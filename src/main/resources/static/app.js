@@ -6,13 +6,53 @@ const state = { token: null, user: null, wallet: null, accounts: [], selectedAcc
 const money = (value) => new Intl.NumberFormat("vi-VN").format(value ?? 0);
 const dateTime = (value) => value ? new Date(value).toLocaleString("vi-VN") : "—";
 
+let noticeTimer = null;
 function message(value, error = false) {
   const notice = $("notice");
+  clearTimeout(noticeTimer);
   notice.textContent = value;
   notice.classList.toggle("error", error);
   notice.hidden = !value;
-  if (value) notice.scrollIntoView({ block: "nearest" });
+  // Errors stay until the next action; confirmations fade out on their own.
+  if (value && !error) noticeTimer = setTimeout(() => { notice.hidden = true; }, 6000);
 }
+
+function iconNode(name, className = "icon icon-sm") {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", className);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+// Styled replacement for window.confirm(); resolves true only when the user presses the confirm button.
+function askConfirm(text, { title = "Xác nhận", confirmLabel = "Xác nhận" } = {}) {
+  const dialog = $("confirm-dialog");
+  $("confirm-dialog-title").textContent = title;
+  $("confirm-dialog-text").textContent = text;
+  $("confirm-dialog-ok").textContent = confirmLabel;
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok"), { once: true });
+    dialog.returnValue = "cancel";
+    dialog.showModal();
+    $("confirm-dialog-ok").focus();
+  });
+}
+
+// Light/dark theme: an explicit choice is stored; otherwise the system setting applies.
+function currentTheme() {
+  return document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+$("theme-toggle").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch { /* private mode: keep for this page only */ }
+  drawBalanceChart();
+  drawStatsChart();
+});
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -56,6 +96,7 @@ async function login(email, password) {
   $("workspace").hidden = false;
   $("user-actions").hidden = false;
   $("user-name").textContent = data.user.displayName;
+  $("user-avatar").textContent = (data.user.displayName.trim()[0] || "?").toUpperCase();
   $("admin-tab").hidden = data.user.role !== "ADMIN";
   selectTab("overview");
   startNotificationPolling();
@@ -64,6 +105,8 @@ async function login(email, password) {
 
 function signOut(callApi = true) {
   stopNotificationPolling();
+  destroyBalanceChart();
+  destroyStatsChart();
   const token = state.token;
   if (callApi && token) fetch(apiBase + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   state.token = null;
@@ -92,7 +135,11 @@ function signOut(callApi = true) {
 
 function selectTab(name) {
   if (name === "admin" && state.user?.role !== "ADMIN") return;
-  document.querySelectorAll("[data-tab]").forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    const active = button.dataset.tab === name;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+  });
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.hidden = panel.dataset.panel !== name);
   message("");
   if (name === "history") loadHistory().catch((error) => message(error.message, true));
@@ -126,7 +173,15 @@ function renderTransfers(target, items, includeBalance) {
     const row = document.createElement("tr");
     const incoming = transfer.direction === "INCOMING";
     cell(row, dateTime(transfer.createdAt));
-    cell(row, incoming ? "Nhận tiền" : "Chuyển tiền");
+    const typeCell = document.createElement("td");
+    const type = document.createElement("span");
+    type.className = "tx-type";
+    const badgeIcon = document.createElement("span");
+    badgeIcon.className = `tx-icon ${incoming ? "tx-in" : "tx-out"}`;
+    badgeIcon.append(iconNode(incoming ? "down" : "up"));
+    type.append(badgeIcon, document.createTextNode(incoming ? "Nhận tiền" : "Chuyển tiền"));
+    typeCell.append(type);
+    row.append(typeCell);
     cell(row, incoming ? transfer.senderWalletCode : transfer.recipientWalletCode);
     cell(row, `${incoming ? "+" : "−"}${money(transfer.amountDong)} ₫`, `numeric ${incoming ? "positive" : "negative"}`);
     if (includeBalance) cell(row, `${money(transfer.myBalanceAfterDong)} ₫`, "numeric");
@@ -134,15 +189,99 @@ function renderTransfers(target, items, includeBalance) {
   }
 }
 
+let balanceChart = null;
+let balancePoints = [];
+
+function destroyBalanceChart() {
+  balanceChart?.destroy();
+  balanceChart = null;
+  balancePoints = [];
+}
+
+function shortDateTime(value) {
+  const date = new Date(value);
+  const two = (n) => String(n).padStart(2, "0");
+  return `${two(date.getDate())}/${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+function withAlpha(hex, alpha) {
+  const value = /^#([0-9a-f]{6})$/i.exec(hex)?.[1];
+  if (!value) return hex;
+  const channel = (start) => parseInt(value.slice(start, start + 2), 16);
+  return `rgba(${channel(0)}, ${channel(2)}, ${channel(4)}, ${alpha})`;
+}
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function drawBalanceChart() {
+  const canvas = $("balance-chart");
+  const empty = $("balance-chart-empty");
+  balanceChart?.destroy();
+  balanceChart = null;
+  empty.hidden = balancePoints.length > 0;
+  canvas.hidden = balancePoints.length === 0;
+  if (balancePoints.length) {
+    const values = balancePoints.map((point) => point.balance);
+    canvas.setAttribute("aria-label", `Biến động số dư qua ${values.length} giao dịch gần nhất: từ ${money(values[0])} ₫ đến ${money(values[values.length - 1])} ₫, thấp nhất ${money(Math.min(...values))} ₫, cao nhất ${money(Math.max(...values))} ₫.`);
+  }
+  if (!balancePoints.length || typeof Chart === "undefined") return;
+  const color = cssVar("--primary") || "#162b53";
+  const context = canvas.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.clientHeight || 240);
+  gradient.addColorStop(0, withAlpha(color, 0.32));
+  gradient.addColorStop(1, withAlpha(color, 0));
+  balanceChart = new Chart(context, {
+    type: "line",
+    data: {
+      labels: balancePoints.map((point) => point.label),
+      datasets: [{ data: balancePoints.map((point) => point.balance), borderColor: color, backgroundColor: gradient, fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2.5 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 450 },
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (item) => `Số dư: ${money(item.parsed.y)} ₫` } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: cssVar("--muted"), maxTicksLimit: 6 } },
+        y: { grid: { color: cssVar("--border") }, ticks: { color: cssVar("--muted"), callback: (value) => money(value) } }
+      }
+    }
+  });
+}
+
+function renderOverviewStats(items, totalItems) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  let inflow = 0;
+  let outflow = 0;
+  for (const transfer of items) {
+    if (new Date(transfer.createdAt) < monthStart) continue;
+    if (transfer.direction === "INCOMING") inflow += transfer.amountDong; else outflow += transfer.amountDong;
+  }
+  // Only the latest 100 transfers are loaded; flag the figure when the month may extend past them.
+  const partial = totalItems > items.length && items.length > 0 && new Date(items[items.length - 1].createdAt) >= monthStart;
+  $("kpi-in").textContent = `${partial ? "≥ " : ""}${money(inflow)} ₫`;
+  $("kpi-out").textContent = `${partial ? "≥ " : ""}${money(outflow)} ₫`;
+  balancePoints = items.slice(0, 20).reverse().map((transfer) => ({
+    label: shortDateTime(transfer.createdAt),
+    balance: transfer.myBalanceAfterDong
+  }));
+  drawBalanceChart();
+}
+
 async function refresh() {
   try {
-    const [wallet, recent, accounts] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=5"), json("/me/accounts")]);
+    const [wallet, recent, accounts] = await Promise.all([json("/me/wallet"), json("/transfers?page=0&size=100"), json("/me/accounts")]);
     state.wallet = wallet;
     state.accounts = accounts;
     renderAccountSelectors();
     $("balance").textContent = money(wallet.balanceDong);
     $("wallet-code").textContent = wallet.walletCode;
-    renderTransfers($("recent-body"), recent.items, false);
+    $("kpi-accounts").textContent = String(accounts.filter((account) => account.status === "ACTIVE").length);
+    renderTransfers($("recent-body"), recent.items.slice(0, 5), false);
+    renderOverviewStats(recent.items, recent.totalItems);
+    refreshUnread().catch(() => {});
   } catch (error) { message(error.message, true); }
 }
 
@@ -239,23 +378,26 @@ $("reload-history").addEventListener("click", () => loadHistory().catch((error) 
 $("prev-page").addEventListener("click", () => { state.page--; loadHistory().catch((error) => message(error.message, true)); });
 $("next-page").addEventListener("click", () => { state.page++; loadHistory().catch((error) => message(error.message, true)); });
 
-$("transfer-form").addEventListener("submit", (event) => {
+$("transfer-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.pendingTransfer) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong), sourceAccountId: data.sourceAccountId };
-  if (!confirm(`Chuyển ${money(payload.amountDong)} ₫ đến ví ${payload.recipientWalletCode}?`)) return;
+  let recipient;
+  try { recipient = await json(`/wallets/lookup/${encodeURIComponent(payload.recipientWalletCode)}`); }
+  catch (error) { message(error.message, true); return; }
+  if (!(await askConfirm(`Chuyển ${money(payload.amountDong)} ₫ đến ${recipient.displayName} (ví ${recipient.walletCode})?`, { title: "Xác nhận chuyển tiền", confirmLabel: "Chuyển tiền" }))) return;
   pending("transfer", payload);
   sendMoney("transfer", payload);
 });
 $("retry-transfer").addEventListener("click", () => { if (state.pendingTransfer) sendMoney("transfer", state.pendingTransfer); });
 
-$("grant-form").addEventListener("submit", (event) => {
+$("grant-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.pendingGrant) { message("Hãy thử lại yêu cầu cũ trước khi tạo yêu cầu mới.", true); return; }
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), recipientWalletCode: data.recipientWalletCode.trim(), amountDong: Number(data.amountDong), reason: data.reason.trim() };
-  if (!confirm(`Cấp ${money(payload.amountDong)} ₫ cho ví ${payload.recipientWalletCode}?`)) return;
+  if (!(await askConfirm(`Cấp ${money(payload.amountDong)} ₫ cho ví ${payload.recipientWalletCode}?`))) return;
   pending("grant", payload);
   sendMoney("grant", payload);
 });
@@ -378,6 +520,49 @@ $("confirm-import").addEventListener("click", () => {
 });
 $("retry-import").addEventListener("click", sendImport);
 
+let statsChart = null;
+let statsData = null;
+
+function destroyStatsChart() {
+  statsChart?.destroy();
+  statsChart = null;
+  statsData = null;
+  $("stats-chart-box").hidden = true;
+  $("stats-result").replaceChildren();
+}
+
+function chartPalette() { return [1, 2, 3, 4, 5, 6, 7, 8].map((n) => cssVar(`--chart-${n}`) || "#4b7bdc"); }
+
+function drawStatsChart() {
+  statsChart?.destroy();
+  statsChart = null;
+  const box = $("stats-chart-box");
+  box.hidden = !statsData || !statsData.items.length || typeof Chart === "undefined";
+  if (box.hidden) return;
+  const byMonth = statsData.groupBy === "month";
+  const palette = chartPalette();
+  const values = statsData.items.map((item) => item.amountDong);
+  $("stats-chart").setAttribute("aria-label", `Biểu đồ chi tiêu theo ${byMonth ? "tháng" : "danh mục"}, chi tiết trong danh sách bên dưới.`);
+  statsChart = new Chart($("stats-chart").getContext("2d"), {
+    type: byMonth ? "bar" : "doughnut",
+    data: {
+      labels: statsData.items.map((item) => item.key),
+      datasets: [{ data: values, backgroundColor: byMonth ? palette[0] : statsData.items.map((_, i) => palette[i % palette.length]), borderColor: cssVar("--surface"), borderWidth: byMonth ? 0 : 2, borderRadius: byMonth ? 6 : 0 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 450 },
+      cutout: byMonth ? undefined : "62%",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (item) => `${item.label}: ${money(item.parsed.y ?? item.parsed)} ₫` } } },
+      scales: byMonth ? {
+        x: { grid: { display: false }, ticks: { color: cssVar("--muted") } },
+        y: { grid: { color: cssVar("--border") }, ticks: { color: cssVar("--muted"), callback: (value) => money(value) } }
+      } : {}
+    }
+  });
+}
+
 $("stats-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
@@ -386,19 +571,36 @@ $("stats-form").addEventListener("submit", async (event) => {
     const result = await json(`/expense-stats?${params}`);
     const target = $("stats-result");
     target.replaceChildren();
+    statsData = result;
     const total = document.createElement("p");
+    total.className = "stats-total";
     total.textContent = `${result.totalCount} khoản chi · ${money(result.totalAmountDong)} ₫`;
     target.append(total);
-    for (const item of result.items) {
+    const palette = chartPalette();
+    result.items.forEach((item, index) => {
       const row = document.createElement("div");
       row.className = "stat-row";
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = result.groupBy === "month" ? palette[0] : palette[index % palette.length];
       const label = document.createElement("span");
-      const amount = document.createElement("strong");
+      label.className = "stat-label";
       label.textContent = item.key;
+      const share = document.createElement("span");
+      share.className = "muted small";
+      share.textContent = result.totalAmountDong > 0 ? `${Math.round((item.amountDong / result.totalAmountDong) * 100)}%` : "";
+      const amount = document.createElement("strong");
       amount.textContent = `${money(item.amountDong)} ₫`;
-      row.append(label, amount);
+      row.append(swatch, label, share, amount);
       target.append(row);
+    });
+    if (!result.items.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Không có khoản chi nào trong khoảng ngày này.";
+      target.append(empty);
     }
+    drawStatsChart();
   } catch (error) { message(error.message, true); }
 });
 
@@ -503,23 +705,59 @@ function renderAccountList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "account-tile";
+    button.dataset.type = account.accountType;
     button.setAttribute("aria-pressed", String(account.accountId === state.selectedAccountId));
+    const head = document.createElement("div");
+    head.className = "tile-head";
     const title = document.createElement("strong");
     title.textContent = `${accountNames[account.accountType]}${account.isDefault ? " · mặc định" : ""}`;
+    head.append(title, iconNode({ CHECKING: "wallet", SAVINGS: "shield", CREDIT: "card" }[account.accountType] || "wallet", "icon tile-icon"));
     const code = document.createElement("span");
     code.textContent = account.accountCode;
     const amount = document.createElement("b");
-    amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(-account.balanceDong) : money(account.balanceDong)} ₫`;
+    amount.textContent = `${account.accountType === "CREDIT" ? "Dư nợ " + money(account.balanceDong === 0 ? 0 : -account.balanceDong) : money(account.balanceDong)} ₫`;
     const status = document.createElement("small");
     status.textContent = account.status === "ACTIVE" ? "Đang hoạt động" : "Đã đóng";
-    button.append(title, code, amount, status);
+    button.append(head, code, amount, status);
+    const extra = state.accountInfo?.[account.accountId];
+    if (extra && account.accountType === "CREDIT" && extra.limitDong > 0) {
+      const used = Math.min(100, Math.round((extra.debtDong / extra.limitDong) * 100));
+      const bar = document.createElement("div");
+      bar.className = `meter${used >= 90 ? " danger" : used >= 70 ? " warn" : ""}`;
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-label", "Hạn mức tín dụng đã dùng");
+      bar.setAttribute("aria-valuenow", String(used));
+      bar.setAttribute("aria-valuemin", "0");
+      bar.setAttribute("aria-valuemax", "100");
+      const fill = document.createElement("span");
+      fill.style.width = `${used}%`;
+      bar.append(fill);
+      const note = document.createElement("small");
+      note.textContent = `Đã dùng ${money(extra.debtDong)} / ${money(extra.limitDong)} ₫`;
+      button.insertBefore(bar, status);
+      button.insertBefore(note, status);
+    } else if (extra && account.accountType === "SAVINGS") {
+      const note = document.createElement("small");
+      note.textContent = `Đáo hạn ${extra.maturesOn} · lãi ${extra.annualRateBps / 100}%/năm`;
+      button.insertBefore(note, status);
+    }
     button.addEventListener("click", () => selectAccount(account.accountId).catch((error) => message(error.message, true)));
     target.append(button);
   }
 }
 
+async function loadAccountInfo() {
+  const info = {};
+  await Promise.all(state.accounts.filter((account) => account.status === "ACTIVE" && account.accountType !== "CHECKING").map(async (account) => {
+    const kind = account.accountType === "CREDIT" ? "credit" : "savings";
+    try { info[account.accountId] = await json(`/me/accounts/${account.accountId}/${kind}`); } catch { /* the tile still renders without the extra line */ }
+  }));
+  state.accountInfo = info;
+}
+
 async function loadAccounts() {
   state.accounts = await json("/me/accounts");
+  await loadAccountInfo();
   renderAccountSelectors();
   renderAccountList();
   if (state.selectedAccountId) await selectAccount(state.selectedAccountId);
@@ -604,36 +842,36 @@ $("account-open-form").addEventListener("submit", async (event) => {
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), type: data.type };
   if (data.type === "SAVINGS") { payload.fundingAccountId = data.fundingAccountId; payload.amountDong = Number(data.amountDong); }
-  if (!confirm(`Mở tài khoản ${accountNames[data.type]}? ${$("account-open-terms").textContent}`)) return;
+  if (!(await askConfirm(`Mở tài khoản ${accountNames[data.type]}? ${$("account-open-terms").textContent}`))) return;
   await accountAction("/me/accounts", payload, "Đã mở tài khoản.");
 });
 $("savings-withdraw-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!confirm("Tất toán khoản tiết kiệm? Nếu trước hạn, phí là 0,5% tiền gốc và không hưởng lãi.")) return;
+  if (!(await askConfirm("Tất toán khoản tiết kiệm? Nếu trước hạn, phí là 0,5% tiền gốc và không hưởng lãi."))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/savings/withdraw`, { requestKey: crypto.randomUUID() }, "Đã tất toán tiết kiệm.");
 });
 $("credit-spend-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), amountDong: Number(data.amountDong), description: data.description.trim() };
-  if (!confirm(`Ghi khoản sử dụng tín dụng ${money(payload.amountDong)} ₫?`)) return;
+  if (!(await askConfirm(`Ghi khoản sử dụng tín dụng ${money(payload.amountDong)} ₫?`))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/credit/charges`, payload, "Đã ghi khoản sử dụng hạn mức.");
 });
 $("credit-repay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
   const payload = { requestKey: crypto.randomUUID(), sourceAccountId: data.sourceAccountId, amountDong: Number(data.amountDong) };
-  if (!confirm(`Hoàn trả ${money(payload.amountDong)} ₫ từ tài khoản Thanh toán?`)) return;
+  if (!(await askConfirm(`Hoàn trả ${money(payload.amountDong)} ₫ từ tài khoản Thanh toán?`))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/credit/repayments`, payload, "Đã hoàn trả dư nợ.");
 });
 $("close-account").addEventListener("click", async () => {
-  if (!confirm("Đóng tài khoản đã tất toán? Tài khoản đã đóng không thể mở lại.")) return;
+  if (!(await askConfirm("Đóng tài khoản đã tất toán? Tài khoản đã đóng không thể mở lại."))) return;
   await accountAction(`/me/accounts/${state.selectedAccountId}/close`, { requestKey: crypto.randomUUID() }, "Đã đóng tài khoản.");
 });
 $("credit-limit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = formData(event.currentTarget);
-  if (!confirm(`Đặt hạn mức ${money(Number(data.limitDong))} ₫ cho tài khoản này?`)) return;
+  if (!(await askConfirm(`Đặt hạn mức ${money(Number(data.limitDong))} ₫ cho tài khoản này?`))) return;
   try {
     await submitJson(`/admin/credit-accounts/${data.accountId.trim()}/limit`, { requestKey: crypto.randomUUID(), limitDong: Number(data.limitDong) });
     message("Đã cập nhật hạn mức tín dụng.");
@@ -643,9 +881,20 @@ $("history-account").addEventListener("change", () => { state.page = 0; loadHist
 
 // --- Thông báo (Observer: máy chủ đẩy sự kiện vào bảng thông báo, giao diện chỉ đọc) ---
 const notificationState = { page: 0, totalPages: 0, timer: null };
+const notificationLook = { TRANSFER_SENT: ["up", "neg"], TRANSFER_RECEIVED: ["down", "pos"], GRANT_RECEIVED: ["down", "pos"], LOW_BALANCE: ["bell", "warn"], FEE_DUE: ["file", "warn"], CREDIT_DEBT: ["card", "neg"], SAVINGS_MATURING: ["history", "info"] };
 const notificationTypes = { TRANSFER_SENT: "Chuyển tiền", TRANSFER_RECEIVED: "Nhận tiền", GRANT_RECEIVED: "Được cấp tiền", LOW_BALANCE: "Số dư thấp", FEE_DUE: "Phí chưa thu", CREDIT_DEBT: "Nhắc nợ", SAVINGS_MATURING: "Tiết kiệm đáo hạn" };
 
+function dayLabel(value) {
+  const date = new Date(value);
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((startOf(new Date()) - startOf(date)) / 86400000);
+  if (diff === 0) return "Hôm nay";
+  if (diff === 1) return "Hôm qua";
+  return date.toLocaleDateString("vi-VN");
+}
+
 function setUnread(count) {
+  $("kpi-unread").textContent = String(count);
   $("unread-badge").textContent = count > 99 ? "99+" : String(count);
   $("unread-badge").hidden = count === 0;
 }
@@ -675,16 +924,32 @@ async function loadNotifications() {
   const list = $("notification-list");
   list.replaceChildren();
   $("notification-empty").hidden = page.items.length > 0;
+  let lastDay = "";
   for (const item of page.items) {
+    const day = dayLabel(item.createdAt);
+    if (day !== lastDay) {
+      const heading = document.createElement("li");
+      heading.className = "day-heading";
+      heading.textContent = day;
+      list.append(heading);
+      lastDay = day;
+    }
     const row = document.createElement("li");
     row.className = item.read ? "read" : "unread";
+    const [iconName, tone] = notificationLook[item.type] || ["bell", "info"];
+    const badge = document.createElement("span");
+    badge.className = `notif-icon tone-${tone}`;
+    badge.append(iconNode(iconName, "icon"));
+    const main = document.createElement("div");
+    main.className = "notif-main";
     const title = document.createElement("strong");
-    title.textContent = `${notificationTypes[item.type] || "Thông báo"} · ${item.title}`;
+    title.textContent = item.title;
     const body = document.createElement("p");
     body.textContent = item.body;
     const time = document.createElement("small");
-    time.textContent = dateTime(item.createdAt);
-    row.append(title, body, time);
+    time.textContent = `${notificationTypes[item.type] || "Thông báo"} · ${dateTime(item.createdAt)}`;
+    main.append(title, body, time);
+    row.append(badge, main);
     if (!item.read) {
       const mark = document.createElement("button");
       mark.type = "button";
@@ -693,7 +958,7 @@ async function loadNotifications() {
       mark.addEventListener("click", async () => {
         try { await json(`/notifications/${item.id}/read`, { method: "POST" }); await loadNotifications(); } catch (error) { message(error.message, true); }
       });
-      row.append(mark);
+      main.append(mark);
     }
     list.append(row);
   }
