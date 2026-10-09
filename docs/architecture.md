@@ -46,3 +46,7 @@ ADMIN có thể gọi `GET /api/v1/admin/reconciliation` để đối chiếu s�
 Spring Boot phục vụ `index.html`, `app.js` và `app.css` cùng REST API. Giao diện gọi API bằng `fetch`; token chỉ ở bộ nhớ của tab, không lưu vào local storage. Đăng xuất gọi API thu hồi phiên rồi xóa token phía client.
 
 Các trang gồm đăng nhập/đăng ký, tổng quan, chuyển tiền, lịch sử, sao kê, nhập CSV, thống kê và cấp tiền ADMIN. Khi chuyển tiền hoặc cấp tiền, giao diện giữ payload và `requestKey` sau xác nhận; nếu timeout hoặc HTTP 5xx, nút thử lại gửi đúng yêu cầu cũ. Nhập CSV dùng hai Adapter để xem trước dòng hợp lệ và lỗi theo dòng; chỉ gửi yêu cầu ghi sau khi người dùng xác nhận. Khi kết quả nhập chưa rõ, giao diện giữ nguyên tệp, định dạng và `requestKey` để thử lại.
+
+## Thông báo (Observer)
+
+`vn.edu.wallet.notify` chứa `EventSubject`, các `NotificationObserver` (trong ứng dụng, email, SMS mô phỏng), `LowBalanceMonitor` và `ReminderService`. Service nghiệp vụ chỉ gọi `publish`; sự kiện được phát sau khi transaction commit. Bảng: `notifications`, `notification_settings` (ngưỡng số dư thấp), `reminder_log` (chống nhắc lặp). Xem [Observer](patterns.md).

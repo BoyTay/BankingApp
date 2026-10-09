@@ -1,5 +1,6 @@
 package vn.edu.wallet.service;
 
+import vn.edu.wallet.notify.LowBalanceMonitor;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -15,8 +16,10 @@ import vn.edu.wallet.api.RequestChecks;
 public class CreditService {
     private final JdbcTemplate db;
     private final WalletQueries wallets;
+    private final LowBalanceMonitor lowBalance;
 
-    public CreditService(JdbcTemplate db, WalletQueries wallets) {
+    public CreditService(JdbcTemplate db, WalletQueries wallets, LowBalanceMonitor lowBalance) {
+        this.lowBalance = lowBalance;
         this.db = db;
         this.wallets = wallets;
     }
@@ -122,6 +125,7 @@ public class CreditService {
         UUID id = UUID.randomUUID();
         db.update("UPDATE wallets SET balance_dong=? WHERE id=?", sourceAfter, source.id());
         db.update("UPDATE wallets SET balance_dong=? WHERE id=?", creditAfter, accountId);
+        lowBalance.check(source.id());
         db.update("""
                 INSERT INTO credit_repayments(id,credit_wallet_id,source_wallet_id,request_key,amount_dong,
                     source_balance_after_dong,credit_balance_after_dong)

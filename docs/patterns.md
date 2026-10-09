@@ -1,4 +1,4 @@
-# Ba GoF patterns trong ví nội bộ
+# Các pattern GoF trong ví nội bộ
 
 Ba pattern dưới đây nằm trong các API đang chạy ở mốc 3. Tất cả endpoint dùng `AuthInterceptor`; service chỉ đọc/ghi dữ liệu thuộc `principal.userId()`.
 
@@ -84,3 +84,40 @@ classDiagram
 `AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()` và `SavingsAccountFactory.build()` tạo cấu hình theo loại; factory cho Tín dụng sẽ được thêm ở chặng sau. `AccountService` chọn factory theo `type`; `SavingsService` bổ sung tiền gốc, kỳ hạn và lãi suất cố định cho khoản gửi.
 
 `AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` cho phép ba thao tác này, còn `SavingsAccountPolicy` từ chối để tiền gửi chỉ đi qua quy trình mở/tất toán có phí và lãi rõ ràng. Tín dụng chưa có factory/policy nên chưa thể mở hoặc dùng để giao dịch.
+
+## 4. Observer — thông báo và nhắc nhở
+
+**Định nghĩa:** Subject giữ danh sách Observer và báo cho tất cả khi có sự kiện; Subject không biết Observer làm gì với sự kiện.
+
+```mermaid
+classDiagram
+  class EventSubject {
+    +attach(NotificationObserver)
+    +detach(NotificationObserver)
+    +publish(WalletEvent)
+    +deliver(WalletEvent)
+  }
+  class NotificationObserver {
+    <<interface>>
+    +update(WalletEvent)
+  }
+  class InAppObserver
+  class EmailObserver
+  class SmsObserver
+  class WalletEvent {
+    <<sealed interface>>
+  }
+  EventSubject o-- NotificationObserver
+  NotificationObserver <|.. InAppObserver
+  NotificationObserver <|.. EmailObserver
+  NotificationObserver <|.. SmsObserver
+  EventSubject ..> WalletEvent
+  TransferService --> EventSubject : publish
+  GrantService --> EventSubject : publish
+  LowBalanceMonitor --> EventSubject : deliver
+  ReminderService --> EventSubject : publish
+```
+
+**Luồng demo:** `POST /api/v1/transfers` → `TransferService.transfer()` ghi sổ cái rồi `events.publish(TransferSent/TransferReceived)` → giao dịch commit → `EventSubject` gọi từng Observer: `InAppObserver` ghi bảng `notifications` (hiện ở tab **Thông báo**), `EmailObserver` gửi SMTP tới Mailpit (`http://localhost:8025`), `SmsObserver` ghi log mô phỏng. Cùng cơ chế phục vụ: cấp tiền, cảnh báo số dư thấp (`LowBalanceMonitor`) và nhắc nhở hằng ngày (`ReminderService`: phí chưa thu, dư nợ tín dụng, tiết kiệm sắp đáo hạn trong 3 ngày).
+
+**Vì sao cần:** thêm kênh mới (ví dụ push) chỉ cần thêm một Observer; `TransferService` không biết có bao nhiêu kênh. **Điểm cần nhớ:** sự kiện chỉ phát **sau khi commit**, nên giao dịch rollback không gửi thông báo; Observer lỗi được bắt riêng, không làm hỏng chuyển tiền hay Observer khác. Gọi lại cùng `requestKey` (idempotent) không phát sự kiện lần hai. Cảnh báo số dư thấp chỉ báo một lần khi số dư tụt xuống dưới ngưỡng và chỉ báo lại sau khi số dư trở lại từ ngưỡng trở lên. **Hỏi đáp:** “Observer khác Spring event?” — ở đây Subject và Observer tự cài đặt để thấy rõ cấu trúc pattern; Spring chỉ tiêm danh sách Observer khi khởi động.

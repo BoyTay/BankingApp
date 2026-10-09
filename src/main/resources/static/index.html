@@ -50,6 +50,7 @@
       <nav class="tabs" aria-label="Chức năng ví">
         <button type="button" data-tab="overview" class="active">Tổng quan</button>
         <button type="button" data-tab="accounts">Tài khoản</button>
+        <button type="button" data-tab="notifications">Thông báo <span class="badge" id="unread-badge" hidden>0</span></button>
         <button type="button" data-tab="transfer">Chuyển tiền</button>
         <button type="button" data-tab="history">Lịch sử</button>
         <button type="button" data-tab="expenses">Chi tiêu</button>
@@ -76,12 +77,19 @@
               <button class="primary" type="submit">Mở tài khoản</button></form>
           </div>
           <div class="card form-card"><h2>Chi tiết tài khoản</h2><p id="account-detail" class="muted">Chọn một tài khoản ở trên.</p><div id="account-fees"></div>
+            <form id="low-balance-form" hidden><h3>Cảnh báo số dư thấp</h3><label>Báo khi số dư dưới (VND, 0 = tắt)<input name="lowBalanceDong" type="number" min="0" step="1" required></label><button class="secondary" type="submit">Lưu ngưỡng</button></form>
             <form id="savings-withdraw-form" hidden><p class="fee-note">Rút trước hạn: phí 0,5% tiền gốc và không hưởng lãi. Đến hạn: nhận gốc cùng lãi minh họa.</p><button class="secondary" type="submit">Tất toán tiết kiệm</button></form>
             <form id="credit-spend-form" hidden><label>Số tiền sử dụng hạn mức (VND)<input name="amountDong" type="number" min="1" step="1" required></label><label>Nội dung<input name="description" maxlength="200" required></label><button class="primary" type="submit">Ghi khoản sử dụng</button></form>
             <form id="credit-repay-form" hidden><label>Tài khoản Thanh toán nguồn<select name="sourceAccountId" id="credit-repay-source"></select></label><label>Số tiền hoàn trả (VND)<input name="amountDong" type="number" min="1" step="1" required></label><button class="secondary" type="submit">Hoàn trả dư nợ</button></form>
             <button class="text-button" type="button" id="close-account" hidden>Đóng tài khoản đã tất toán</button><div id="credit-activity"></div>
           </div>
         </div>
+      </div>
+
+      <div class="panel" data-panel="notifications" hidden>
+        <div class="section-heading"><h2>Thông báo</h2><button type="button" class="secondary" id="read-all">Đánh dấu đã đọc tất cả</button></div>
+        <div class="card"><ul id="notification-list" class="notification-list"></ul><p class="muted" id="notification-empty" hidden>Chưa có thông báo nào.</p></div>
+        <div class="pager"><button type="button" class="secondary" id="notif-prev">Trước</button><span id="notif-page-label"></span><button type="button" class="secondary" id="notif-next">Sau</button></div>
       </div>
 
       <div class="panel" data-panel="transfer" hidden>

@@ -17,6 +17,9 @@ import vn.edu.wallet.core.Money;
 import vn.edu.wallet.core.TransferException;
 import vn.edu.wallet.core.TransferRequest;
 import vn.edu.wallet.core.TransferRules;
+import vn.edu.wallet.notify.EventSubject;
+import vn.edu.wallet.notify.LowBalanceMonitor;
+import vn.edu.wallet.notify.WalletEvent;
 
 @Service
 public class TransferService {
@@ -32,13 +35,18 @@ public class TransferService {
     private final WalletQueries wallets;
     private final TransferWriteHook hook;
     private final AccountPolicies accountPolicies;
+    private final EventSubject events;
+    private final LowBalanceMonitor lowBalance;
 
     public TransferService(JdbcTemplate db, WalletQueries wallets, TransferWriteHook hook,
-                           AccountPolicies accountPolicies) {
+                           AccountPolicies accountPolicies, EventSubject events,
+                           LowBalanceMonitor lowBalance) {
         this.db = db;
         this.wallets = wallets;
         this.hook = hook;
         this.accountPolicies = accountPolicies;
+        this.events = events;
+        this.lowBalance = lowBalance;
     }
 
     @Transactional
@@ -115,6 +123,12 @@ public class TransferService {
                 UUID.randomUUID(), sender.id(), transferId, -amount, decision.senderBalanceAfter().dong());
         db.update("INSERT INTO ledger_entries(id,wallet_id,transfer_id,delta_dong,balance_after_dong) VALUES (?,?,?,?,?)",
                 UUID.randomUUID(), recipient.id(), transferId, amount, decision.recipientBalanceAfter().dong());
+        events.publish(new WalletEvent.TransferSent(sender.ownerId(), sender.id(), recipient.code(), amount,
+                decision.senderBalanceAfter().dong()));
+        events.publish(new WalletEvent.TransferReceived(recipient.ownerId(), recipient.id(), sender.code(), amount,
+                decision.recipientBalanceAfter().dong()));
+        lowBalance.check(sender.id());
+        lowBalance.check(recipient.id());
         return new TransferResult(byIdForWallet(transferId, sender.id()), false);
     }
 

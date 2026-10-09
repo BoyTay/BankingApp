@@ -58,10 +58,12 @@ async function login(email, password) {
   $("user-name").textContent = data.user.displayName;
   $("admin-tab").hidden = data.user.role !== "ADMIN";
   selectTab("overview");
+  startNotificationPolling();
   await refresh();
 }
 
 function signOut(callApi = true) {
+  stopNotificationPolling();
   const token = state.token;
   if (callApi && token) fetch(apiBase + "/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   state.token = null;
@@ -94,6 +96,7 @@ function selectTab(name) {
   document.querySelectorAll("[data-panel]").forEach((panel) => panel.hidden = panel.dataset.panel !== name);
   message("");
   if (name === "history") loadHistory().catch((error) => message(error.message, true));
+  if (name === "notifications") loadNotifications().catch((error) => message(error.message, true));
   if (name === "accounts") loadAccounts().catch((error) => message(error.message, true));
 }
 
@@ -522,6 +525,7 @@ async function selectAccount(accountId) {
   renderAccountList();
   const account = state.accounts.find((item) => item.accountId === accountId);
   if (!account) return;
+  $("low-balance-form").hidden = true;
   $("savings-withdraw-form").hidden = true;
   $("credit-spend-form").hidden = true;
   $("credit-repay-form").hidden = true;
@@ -545,7 +549,14 @@ async function selectAccount(accountId) {
       line.textContent = `${dateTime(item.createdAt)} · ${item.type === "CHARGE" ? "Sử dụng" : item.type === "REPAYMENT" ? "Hoàn trả" : "Phí"} ${money(item.amountDong)} ₫ · dư nợ ${money(item.debtAfterDong)} ₫ · ${item.description}`;
       $("credit-activity").append(line);
     }
-  } else detail += `Số dư ${money(account.balanceDong)} ₫.`;
+  } else {
+    detail += `Số dư ${money(account.balanceDong)} ₫.`;
+    if (account.accountType === "CHECKING" && account.status === "ACTIVE") {
+      const settings = await json(`/me/accounts/${accountId}/notification-settings`);
+      $("low-balance-form").elements.lowBalanceDong.value = settings.lowBalanceDong;
+      $("low-balance-form").hidden = false;
+    }
+  }
   $("account-detail").textContent = detail;
   const fees = await json(`/me/accounts/${accountId}/fees`);
   $("account-fees").replaceChildren();
@@ -632,3 +643,80 @@ $("credit-limit-form").addEventListener("submit", async (event) => {
   } catch (error) { message(error.message, true); }
 });
 $("history-account").addEventListener("change", () => { state.page = 0; loadHistory().catch((error) => message(error.message, true)); });
+
+// --- Thông báo (Observer: máy chủ đẩy sự kiện vào bảng thông báo, giao diện chỉ đọc) ---
+const notificationState = { page: 0, totalPages: 0, timer: null };
+const notificationTypes = { TRANSFER_SENT: "Chuyển tiền", TRANSFER_RECEIVED: "Nhận tiền", GRANT_RECEIVED: "Được cấp tiền", LOW_BALANCE: "Số dư thấp", FEE_DUE: "Phí chưa thu", CREDIT_DEBT: "Nhắc nợ", SAVINGS_MATURING: "Tiết kiệm đáo hạn" };
+
+function setUnread(count) {
+  $("unread-badge").textContent = count > 99 ? "99+" : String(count);
+  $("unread-badge").hidden = count === 0;
+}
+
+async function refreshUnread() {
+  const page = await json("/notifications?page=0&size=1");
+  setUnread(page.unread);
+}
+
+function startNotificationPolling() {
+  stopNotificationPolling();
+  refreshUnread().catch(() => {});
+  notificationState.timer = setInterval(() => refreshUnread().catch(() => {}), 30000);
+}
+
+function stopNotificationPolling() {
+  clearInterval(notificationState.timer);
+  notificationState.timer = null;
+  setUnread(0);
+  notificationState.page = 0;
+}
+
+async function loadNotifications() {
+  const page = await json(`/notifications?page=${notificationState.page}&size=10`);
+  notificationState.totalPages = Math.max(1, Math.ceil(page.total / page.size));
+  setUnread(page.unread);
+  const list = $("notification-list");
+  list.replaceChildren();
+  $("notification-empty").hidden = page.items.length > 0;
+  for (const item of page.items) {
+    const row = document.createElement("li");
+    row.className = item.read ? "read" : "unread";
+    const title = document.createElement("strong");
+    title.textContent = `${notificationTypes[item.type] || "Thông báo"} · ${item.title}`;
+    const body = document.createElement("p");
+    body.textContent = item.body;
+    const time = document.createElement("small");
+    time.textContent = dateTime(item.createdAt);
+    row.append(title, body, time);
+    if (!item.read) {
+      const mark = document.createElement("button");
+      mark.type = "button";
+      mark.className = "text-button";
+      mark.textContent = "Đánh dấu đã đọc";
+      mark.addEventListener("click", async () => {
+        try { await json(`/notifications/${item.id}/read`, { method: "POST" }); await loadNotifications(); } catch (error) { message(error.message, true); }
+      });
+      row.append(mark);
+    }
+    list.append(row);
+  }
+  $("notif-page-label").textContent = `Trang ${notificationState.page + 1}/${notificationState.totalPages}`;
+  $("notif-prev").disabled = notificationState.page === 0;
+  $("notif-next").disabled = notificationState.page + 1 >= notificationState.totalPages;
+}
+
+$("read-all").addEventListener("click", async () => {
+  try { await json("/notifications/read-all", { method: "POST" }); await loadNotifications(); } catch (error) { message(error.message, true); }
+});
+$("notif-prev").addEventListener("click", () => { notificationState.page--; loadNotifications().catch((error) => message(error.message, true)); });
+$("notif-next").addEventListener("click", () => { notificationState.page++; loadNotifications().catch((error) => message(error.message, true)); });
+
+$("low-balance-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const value = Number($("low-balance-form").elements.lowBalanceDong.value);
+    await json(`/me/accounts/${state.selectedAccountId}/notification-settings`, { method: "PUT", body: JSON.stringify({ lowBalanceDong: value }) });
+    message(value === 0 ? "Đã tắt cảnh báo số dư thấp." : `Sẽ cảnh báo khi số dư dưới ${money(value)} ₫.`);
+    refreshUnread().catch(() => {});
+  } catch (error) { message(error.message, true); }
+});
