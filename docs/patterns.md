@@ -81,9 +81,9 @@ classDiagram
 
 ## Mở rộng: Factory Method và Policy cho tài khoản
 
-`AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()` và `SavingsAccountFactory.build()` tạo cấu hình theo loại; factory cho Tín dụng sẽ được thêm ở chặng sau. `AccountService` chọn factory theo `type`; `SavingsService` bổ sung tiền gốc, kỳ hạn và lãi suất cố định cho khoản gửi.
+`AccountFactory.create()` giữ các bước chung: sinh ID, mã tài khoản và tháng bắt đầu tính phí. `CheckingAccountFactory.build()`, `SavingsAccountFactory.build()` và `CreditAccountFactory.build()` tạo cấu hình theo loại. `AccountService` chọn factory theo `type`; `CreditService` quản lý hạn mức, sử dụng và hoàn trả; `SavingsService` bổ sung tiền gốc, kỳ hạn và lãi suất cố định cho khoản gửi.
 
-`AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` cho phép ba thao tác này, còn `SavingsAccountPolicy` từ chối để tiền gửi chỉ đi qua quy trình mở/tất toán có phí và lãi rõ ràng. Tín dụng chưa có factory/policy nên chưa thể mở hoặc dùng để giao dịch.
+`AccountPolicy` là giao diện quy tắc theo loại tài khoản. `TransferService` hỏi policy của cả nguồn và đích trước khi chuyển; `GrantService` hỏi policy của đích trước khi cấp tiền. `CheckingAccountPolicy` cho phép ba thao tác này, còn `SavingsAccountPolicy` từ chối để tiền gửi chỉ đi qua quy trình mở/tất toán có phí và lãi rõ ràng. `CreditAccountPolicy` cũng từ chối chuyển/nhận/cấp tiền trực tiếp: Tín dụng chỉ đi qua `CreditService` (sử dụng hạn mức và hoàn trả từ Thanh toán).
 
 ## 4. Observer — thông báo và nhắc nhở
 
