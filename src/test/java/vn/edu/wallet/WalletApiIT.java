@@ -1117,6 +1117,418 @@ class WalletApiIT {
                 .path("body").asString().contains("2026-12-31"));
     }
 
+    // ---- Test plan, step 3: transfers (C), savings/credit (D), account lifecycle (B) ----
+
+    @Test
+    void transferAmountAndRequestValidationBoundaries() throws Exception {
+        Account a = register("bound-a");
+        Account b = register("bound-b");
+        grant(admin(), a, 1_000_000_000_000L);
+        assertEquals(201, transfer(a, b, 1_000_000_000_000L, UUID.randomUUID()).statusCode());
+        assertEquals(0, wallet(a).path("balanceDong").longValue());
+        assertEquals(1_000_000_000_000L, wallet(b).path("balanceDong").longValue());
+
+        assertError(400, "INVALID_AMOUNT", transferRaw(b, a.walletCode(), "-1", UUID.randomUUID()));
+        assertError(400, "INVALID_AMOUNT", transferRaw(b, a.walletCode(), "\"5\"", UUID.randomUUID()));
+        assertError(400, "INVALID_AMOUNT", transferRaw(b, a.walletCode(), "null", UUID.randomUUID()));
+        assertError(404, "WALLET_NOT_FOUND", transferRaw(b, "WLT" + "0".repeat(20), "1", UUID.randomUUID()));
+        assertError(400, "INVALID_REQUEST", request("POST", "/transfers", b.token(),
+                "{\"recipientWalletCode\":\"" + a.walletCode() + "\",\"amountDong\":1}"));
+        assertError(400, "INVALID_REQUEST", request("POST", "/transfers", b.token(),
+                "{\"requestKey\":\"not-a-uuid\",\"recipientWalletCode\":\"" + a.walletCode() + "\",\"amountDong\":1}"));
+        assertEquals(1, count("transfers"));
+        assertEquals(1_000_000_000_000L, totalBalances());
+    }
+
+    @Test
+    void historyPaginationIsValidatedAndOrderedNewestFirst() throws Exception {
+        Account a = register("page-a");
+        Account b = register("page-b");
+        grant(admin(), a, 1000);
+        for (int i = 1; i <= 3; i++) assertEquals(201, transfer(a, b, i, UUID.randomUUID()).statusCode());
+        for (String query : List.of("size=0", "size=101", "page=-1", "size=-5")) {
+            assertError(400, "INVALID_REQUEST", request("GET", "/transfers?" + query, a.token(), null));
+        }
+        assertEquals(200, request("GET", "/transfers?size=100", a.token(), null).statusCode());
+        JsonNode first = body(request("GET", "/transfers?page=0&size=2", a.token(), null));
+        JsonNode second = body(request("GET", "/transfers?page=1&size=2", a.token(), null));
+        JsonNode beyond = body(request("GET", "/transfers?page=5&size=2", a.token(), null));
+        assertEquals(3, first.path("totalItems").longValue());
+        assertEquals(2, first.path("items").size());
+        assertEquals(1, second.path("items").size());
+        assertEquals(0, beyond.path("items").size());
+        List<String> times = new ArrayList<>();
+        for (JsonNode item : first.path("items")) times.add(item.path("createdAt").asString());
+        for (JsonNode item : second.path("items")) times.add(item.path("createdAt").asString());
+        for (int i = 1; i < times.size(); i++) {
+            assertTrue(times.get(i - 1).compareTo(times.get(i)) >= 0, "history must be newest first: " + times);
+        }
+        assertEquals(994, first.path("items").get(0).path("myBalanceAfterDong").longValue()); // 1000-1-2-3
+    }
+
+    @Test
+    void transferFromSomeoneElsesOrNonCheckingSourceChangesNothing() throws Exception {
+        Account a = register("src-a");
+        Account b = register("src-b");
+        Account administrator = admin();
+        grant(administrator, a, 500_000);
+        grant(administrator, b, 500_000);
+        UUID bWalletId = UUID.fromString(wallet(b).path("walletId").asString());
+        UUID aWalletId = UUID.fromString(wallet(a).path("walletId").asString());
+        HttpResponse<String> foreign = request("POST", "/transfers", a.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"recipientWalletCode\":\"" + a.walletCode()
+                        + "\",\"amountDong\":10,\"sourceAccountId\":\"" + bWalletId + "\"}");
+        assertTrue(foreign.statusCode() >= 400 && foreign.statusCode() < 500, foreign.body());
+        UUID savingsId = UUID.fromString(body(openSavings(a, 200_000)).path("accountId").asString());
+        HttpResponse<String> fromSavings = request("POST", "/transfers", a.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"recipientWalletCode\":\"" + b.walletCode()
+                        + "\",\"amountDong\":10,\"sourceAccountId\":\"" + savingsId + "\"}");
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", fromSavings);
+        assertEquals(500_000, wallet(b).path("balanceDong").longValue());
+        assertEquals(300_000, body(request("GET", "/me/accounts/" + aWalletId, a.token(), null))
+                .path("balanceDong").longValue());
+        assertEquals(1, count("transfers")); // only the savings opening
+    }
+
+    @Test
+    void randomTransfersConserveTotalAndStayReconciled() throws Exception {
+        Account a = register("rand-a");
+        Account b = register("rand-b");
+        Account c = register("rand-c");
+        Account administrator = admin();
+        List<Account> people = List.of(a, b, c);
+        for (Account person : people) grant(administrator, person, 1000);
+        java.util.Random random = new java.util.Random(42);
+        int accepted = 0;
+        for (int i = 0; i < 40; i++) {
+            Account from = people.get(random.nextInt(3));
+            Account to = people.get((people.indexOf(from) + 1 + random.nextInt(2)) % 3);
+            HttpResponse<String> response = transfer(from, to, 1 + random.nextInt(600), UUID.randomUUID());
+            assertTrue(response.statusCode() == 201 || response.statusCode() == 422, response.body());
+            if (response.statusCode() == 201) accepted++;
+            assertEquals(3000, totalBalances());
+        }
+        assertTrue(accepted > 0);
+        assertEquals(accepted, count("transfers"));
+        for (Account person : people) assertTrue(wallet(person).path("balanceDong").longValue() >= 0);
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void savingsMinimumDepositAndEarlyFeeRounding() throws Exception {
+        Account owner = register("sav-round");
+        Account administrator = admin();
+        grant(administrator, owner, 400_000);
+        assertError(400, "INVALID_AMOUNT", openSavings(owner, 99_999));
+        assertEquals(0, count("savings_accounts"));
+        // 100100 * 0.5% = 500.5 -> 501 ; 100001 * 0.5% = 500.005 -> 500
+        for (long[] row : new long[][] {{100_100, 501}, {100_001, 500}}) {
+            HttpResponse<String> opened = openSavings(owner, row[0]);
+            assertEquals(201, opened.statusCode(), opened.body());
+            UUID id = UUID.fromString(body(opened).path("accountId").asString());
+            HttpResponse<String> closed = request("POST", "/me/accounts/" + id + "/savings/withdraw",
+                    owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\"}");
+            assertEquals(201, closed.statusCode(), closed.body());
+            assertEquals(row[1], body(closed).path("feeDong").longValue());
+            assertEquals(row[0] - row[1], body(closed).path("payoutDong").longValue());
+        }
+        assertEquals(400_000 - 501 - 500, wallet(owner).path("balanceDong").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void savingsWithdrawnAfterMaturityEarnsNoExtraInterest() throws Exception {
+        Account owner = register("sav-late");
+        grant(admin(), owner, 200_000);
+        HttpResponse<String> opened = openSavings(owner, 200_000);
+        UUID id = UUID.fromString(body(opened).path("accountId").asString());
+        db.update("UPDATE savings_accounts SET matures_on=? WHERE wallet_id=?",
+                java.sql.Date.valueOf(LocalDate.now(ZoneOffset.UTC).minusDays(60)), id);
+        JsonNode result = body(request("POST", "/me/accounts/" + id + "/savings/withdraw", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\"}"));
+        assertTrue(result.path("matured").asBoolean());
+        assertEquals(1973, result.path("interestDong").longValue()); // same as withdrawing on the day
+        assertEquals(0, result.path("feeDong").longValue());
+    }
+
+    @Test
+    void creditLimitBoundariesAndOverpaymentAreRejected() throws Exception {
+        Account owner = register("credit-edge");
+        Account other = register("credit-edge-other");
+        Account administrator = admin();
+        UUID id = UUID.fromString(body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CREDIT\"}")).path("accountId").asString());
+        assertEquals(201, request("POST", "/admin/credit-accounts/" + id + "/limit", administrator.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":100000}").statusCode());
+        UUID key = UUID.randomUUID();
+        String exact = "{\"requestKey\":\"" + key + "\",\"amountDong\":100000,\"description\":\"Dung han muc\"}";
+        assertEquals(201, request("POST", "/me/accounts/" + id + "/credit/charges", owner.token(), exact).statusCode());
+        assertError(409, "CREDIT_KEY_CONFLICT", request("POST", "/me/accounts/" + id + "/credit/charges",
+                owner.token(), exact.replace("100000", "99999")));
+        assertError(422, "CREDIT_LIMIT_EXCEEDED", request("POST", "/me/accounts/" + id + "/credit/charges",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":1,\"description\":\"x\"}"));
+        assertError(404, "ACCOUNT_NOT_FOUND", request("POST", "/me/accounts/" + id + "/credit/charges",
+                other.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"amountDong\":1,\"description\":\"x\"}"));
+        grant(administrator, owner, 500_000);
+        String source = wallet(owner).path("walletId").asString();
+        assertError(422, "CREDIT_OVERPAYMENT", request("POST", "/me/accounts/" + id + "/credit/repayments",
+                owner.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"sourceAccountId\":\"" + source
+                        + "\",\"amountDong\":100001}"));
+        assertEquals(100_000, body(request("GET", "/me/accounts/" + id + "/credit", owner.token(), null))
+                .path("debtDong").longValue());
+        assertEquals(500_000, wallet(owner).path("balanceDong").longValue());
+        // limits can only be granted to a credit account
+        assertError(404, "ACCOUNT_NOT_FOUND", request("POST", "/admin/credit-accounts/" + source + "/limit",
+                administrator.token(), "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"limitDong\":1000}"));
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+    }
+
+    @Test
+    void accountCloseRulesAndOwnership() throws Exception {
+        Account owner = register("close-owner");
+        Account other = register("close-other");
+        Account administrator = admin();
+        UUID defaultId = UUID.fromString(wallet(owner).path("walletId").asString());
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", closeAccount(owner, defaultId, UUID.randomUUID()));
+
+        JsonNode secondary = body(request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"CHECKING\"}"));
+        UUID secondaryId = UUID.fromString(secondary.path("accountId").asString());
+        assertEquals(201, grantRaw(administrator, secondary.path("accountCode").asString(), "50",
+                "close test", UUID.randomUUID()).statusCode());
+        assertError(422, "ACCOUNT_NOT_EMPTY", closeAccount(owner, secondaryId, UUID.randomUUID()));
+        assertError(404, "ACCOUNT_NOT_FOUND", closeAccount(other, secondaryId, UUID.randomUUID()));
+        assertEquals(201, request("POST", "/transfers", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"recipientWalletCode\":\"" + other.walletCode()
+                        + "\",\"amountDong\":50,\"sourceAccountId\":\"" + secondaryId + "\"}").statusCode());
+
+        UUID closeKey = UUID.randomUUID();
+        HttpResponse<String> closed = closeAccount(owner, secondaryId, closeKey);
+        assertEquals(201, closed.statusCode(), closed.body());
+        assertEquals(200, closeAccount(owner, secondaryId, closeKey).statusCode());
+        assertError(409, "ACCOUNT_ALREADY_CLOSED", closeAccount(owner, secondaryId, UUID.randomUUID()));
+        assertEquals("CLOSED", body(request("GET", "/me/accounts/" + secondaryId, owner.token(), null))
+                .path("status").asString());
+        // history is kept after closing
+        assertEquals(1, body(request("GET", "/transfers?accountId=" + secondaryId, owner.token(), null))
+                .path("totalItems").longValue());
+        assertEquals(0, body(request("GET", "/admin/reconciliation", administrator.token(), null))
+                .path("mismatchCount").longValue());
+
+        grant(administrator, owner, 200_000);
+        UUID savingsId = UUID.fromString(body(openSavings(owner, 100_000)).path("accountId").asString());
+        assertError(422, "ACCOUNT_OPERATION_NOT_ALLOWED", closeAccount(owner, savingsId, UUID.randomUUID()));
+    }
+
+    // ---- Test plan, step 4: auth (A), admin (E), statements/imports (F), notifications (G) ----
+
+    @Test
+    void passwordLengthBoundaries() throws Exception {
+        for (int length : new int[] {9, 129}) {
+            assertError(400, "WEAK_PASSWORD", registerRaw(uniqueEmail("pw"), "Pw", "p".repeat(length)));
+        }
+        for (int length : new int[] {10, 128}) {
+            String email = uniqueEmail("pw");
+            HttpResponse<String> created = registerRaw(email, "Pw", "p".repeat(length));
+            assertEquals(201, created.statusCode(), "password length " + length + ": " + created.body());
+            assertEquals(200, request("POST", "/auth/login", null,
+                    "{\"email\":\"" + email + "\",\"password\":\"" + "p".repeat(length) + "\"}").statusCode());
+        }
+        assertEquals(2, count("app_users"));
+    }
+
+    @Test
+    void emailAndDisplayNameValidationAndCaseInsensitiveDuplicates() throws Exception {
+        for (String bad : new String[] {"no-at-sign", "a@b", "@example.test", "a b@example.test"}) {
+            assertError(400, "INVALID_EMAIL", registerRaw(bad, "Name", "StrongPass123!"));
+        }
+        assertError(400, "INVALID_REQUEST", registerRaw(uniqueEmail("n"), "", "StrongPass123!"));
+        assertError(400, "INVALID_REQUEST", registerRaw(uniqueEmail("n"), "x".repeat(121), "StrongPass123!"));
+        assertEquals(201, registerRaw(uniqueEmail("n"), "x".repeat(120), "StrongPass123!").statusCode());
+        String email = uniqueEmail("dup");
+        assertEquals(201, registerRaw(email, "First", "StrongPass123!").statusCode());
+        assertError(409, "EMAIL_EXISTS", registerRaw("  " + email.toUpperCase() + " ", "Second", "StrongPass123!"));
+        assertEquals(200, request("POST", "/auth/login", null,
+                "{\"email\":\"" + email.toUpperCase() + "\",\"password\":\"StrongPass123!\"}").statusCode());
+    }
+
+    @Test
+    void clientCannotChooseRoleAtRegistration() throws Exception {
+        String email = uniqueEmail("role");
+        HttpResponse<String> created = request("POST", "/auth/register", null,
+                "{\"email\":\"" + email + "\",\"displayName\":\"Role\",\"password\":\"StrongPass123!\",\"role\":\"ADMIN\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        assertEquals("USER", body(created).path("role").asString());
+        assertEquals("USER", db.queryForObject("SELECT role FROM app_users WHERE email=?", String.class, email));
+    }
+
+    @Test
+    void authenticationAndRoleMatrixOnEveryEndpointGroup() throws Exception {
+        Account user = register("matrix-user");
+        UUID someId = UUID.randomUUID();
+        String[][] protectedEndpoints = {
+                {"GET", "/me/wallet", null}, {"GET", "/me/accounts", null}, {"GET", "/transfers", null},
+                {"GET", "/notifications", null}, {"GET", "/statements?from=2026-01-01&to=2026-01-31&format=csv", null},
+                {"GET", "/expense-stats?from=2026-01-01&to=2026-01-31&groupBy=month", null},
+                {"POST", "/transfers", "{\"requestKey\":\"" + someId + "\",\"recipientWalletCode\":\"WLT0\",\"amountDong\":1}"},
+                {"POST", "/auth/logout", null},
+                {"POST", "/admin/grants", "{\"requestKey\":\"" + someId + "\",\"recipientWalletCode\":\"WLT0\",\"amountDong\":1,\"reason\":\"x\"}"},
+                {"GET", "/admin/reconciliation", null},
+                {"POST", "/admin/credit-accounts/" + someId + "/limit", "{\"requestKey\":\"" + someId + "\",\"limitDong\":1}"}};
+        for (String[] endpoint : protectedEndpoints) {
+            String label = endpoint[0] + " " + endpoint[1];
+            assertEquals(401, request(endpoint[0], endpoint[1], null, endpoint[2]).statusCode(), label + " without token");
+            assertEquals(401, request(endpoint[0], endpoint[1], "garbage-token", endpoint[2]).statusCode(), label + " bad token");
+            if (endpoint[1].startsWith("/admin")) {
+                assertError(403, "FORBIDDEN", request(endpoint[0], endpoint[1], user.token(), endpoint[2]));
+            }
+        }
+        HttpRequest basic = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/me/wallet"))
+                .header("Authorization", "Basic " + user.token()).GET().build();
+        assertEquals(401, http.send(basic, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertEquals(401, request("POST", "/auth/login", null, "{\"email\":\"" + uniqueEmail("ghost")
+                + "\",\"password\":\"whatever-123\"}").statusCode());
+    }
+
+    @Test
+    void grantReasonAndAmountBoundaries() throws Exception {
+        Account target = register("grant-edge");
+        Account administrator = admin();
+        assertEquals(201, grantRaw(administrator, target.walletCode(), "1000000000000", "x".repeat(500),
+                UUID.randomUUID()).statusCode());
+        assertError(400, "INVALID_AMOUNT", grantRaw(administrator, target.walletCode(), "1000000000001", "ok", UUID.randomUUID()));
+        assertError(400, "INVALID_AMOUNT", grantRaw(administrator, target.walletCode(), "0", "ok", UUID.randomUUID()));
+        assertError(400, "INVALID_AMOUNT", grantRaw(administrator, target.walletCode(), "-5", "ok", UUID.randomUUID()));
+        assertError(400, "INVALID_REQUEST", grantRaw(administrator, target.walletCode(), "1", "x".repeat(501), UUID.randomUUID()));
+        assertError(400, "INVALID_REQUEST", grantRaw(administrator, target.walletCode(), "1", "   ", UUID.randomUUID()));
+        assertError(404, "WALLET_NOT_FOUND", grantRaw(administrator, "WLT" + "0".repeat(20), "1", "ok", UUID.randomUUID()));
+        assertEquals(1, count("admin_grants"));
+        assertEquals(1_000_000_000_000L, wallet(target).path("balanceDong").longValue());
+        UUID trimmedKey = UUID.randomUUID();
+        assertEquals(201, grantRaw(administrator, target.walletCode(), "1", "  padded  ", trimmedKey).statusCode());
+        assertEquals("padded", db.queryForObject("SELECT reason FROM admin_grants WHERE request_key=?", String.class, trimmedKey));
+    }
+
+    @Test
+    void grantKeysAreScopedPerAdministrator() throws Exception {
+        Account target = register("grant-scope");
+        Account first = admin();
+        Account second = admin();
+        UUID sharedKey = UUID.randomUUID();
+        assertEquals(201, grantRaw(first, target.walletCode(), "10", "from first", sharedKey).statusCode());
+        assertEquals(201, grantRaw(second, target.walletCode(), "20", "from second", sharedKey).statusCode());
+        assertEquals(200, grantRaw(first, target.walletCode(), "10", "from first", sharedKey).statusCode());
+        assertError(409, "GRANT_KEY_CONFLICT", grantRaw(second, target.walletCode(), "21", "from second", sharedKey));
+        assertEquals(2, count("admin_grants"));
+        assertEquals(30, wallet(target).path("balanceDong").longValue());
+    }
+
+    @Test
+    void reconciliationPaginatesOnlyMismatchedWalletsAndValidatesParameters() throws Exception {
+        Account administrator = admin();
+        List<Account> users = List.of(register("rec-a"), register("rec-b"), register("rec-c"));
+        for (Account user : users) {
+            db.update("UPDATE wallets SET balance_dong=balance_dong+1 WHERE wallet_code=?", user.walletCode());
+        }
+        JsonNode first = body(request("GET", "/admin/reconciliation?page=0&size=2", administrator.token(), null));
+        JsonNode second = body(request("GET", "/admin/reconciliation?page=1&size=2", administrator.token(), null));
+        assertEquals(3, first.path("mismatchCount").longValue());
+        assertEquals(4, first.path("checkedWallets").longValue()); // three users plus the administrator
+        assertEquals(2, first.path("items").size());
+        assertEquals(1, second.path("items").size());
+        assertEquals("1", first.path("items").get(0).path("differenceDong").asString());
+        for (String query : List.of("size=0", "size=101", "page=-1")) {
+            assertError(400, "INVALID_REQUEST", request("GET", "/admin/reconciliation?" + query, administrator.token(), null));
+        }
+    }
+
+    @Test
+    void statementRangeFormatAndEncodingRules() throws Exception {
+        Account a = register("stmt-a");
+        Account b = register("stmt-b");
+        grant(admin(), a, 100);
+        assertEquals(201, transfer(a, b, 10, UUID.randomUUID()).statusCode());
+        String base = "/statements?format=csv&";
+        assertEquals(200, download(a, base + "from=2026-01-01&to=2026-01-01").statusCode());
+        assertEquals(200, download(a, base + "from=2026-01-01&to=2027-01-01").statusCode()); // 365 days apart
+        for (String bad : List.of("from=2026-01-01&to=2027-01-02", "from=2026-02-01&to=2026-01-01",
+                "from=2026-01-01", "to=2026-01-01", "from=01/01/2026&to=31/01/2026", "from=2026-02-30&to=2026-03-01")) {
+            HttpResponse<byte[]> response = download(a, base + bad);
+            assertEquals(400, response.statusCode(), bad);
+            assertEquals("INVALID_DATE_RANGE", json.readTree(new String(response.body(), StandardCharsets.UTF_8))
+                    .path("code").asString(), bad);
+        }
+        assertEquals(400, download(a, "/statements?from=2026-01-01&to=2026-01-31&format=xls").statusCode());
+        assertEquals(401, download(a, base + "from=2026-01-01&to=2026-01-31", false).statusCode());
+        HttpResponse<byte[]> csv = download(a, "/statements?from=2026-01-01&to=2026-12-31&format=csv");
+        byte[] bytes = csv.body();
+        assertEquals(200, csv.statusCode());
+        assertArrayEquals(new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF},
+                java.util.Arrays.copyOfRange(bytes, 0, 3), "CSV needs a UTF-8 BOM for Excel");
+        String text = new String(bytes, StandardCharsets.UTF_8).substring(1);
+        assertTrue(text.startsWith("Thời gian UTC,Mã giao dịch,Loại,Ví đối ứng,Số tiền (VND),Số dư sau (VND)"), text);
+        assertTrue(csv.headers().firstValue("Content-Type").orElse("").startsWith("text/csv"));
+        assertTrue(csv.headers().firstValue("Content-Disposition").orElse("").contains("attachment"));
+        assertTrue(text.lines().anyMatch(line -> line.contains("Chuyển đi") && line.endsWith(",90")),
+                "own balance after the transfer is 90: " + text);
+    }
+
+    @Test
+    void expensePreviewSizeLimitsAndAuthentication() throws Exception {
+        Account a = register("upload-edge");
+        assertEquals(200, preview(a, "SAMPLE_A", new byte[1_048_576]).statusCode()); // exactly 1 MiB is allowed
+        assertError(413, "FILE_TOO_LARGE", preview(a, "SAMPLE_A", new byte[1_048_577]));
+        assertEquals(401, preview(null, "SAMPLE_A", "x".getBytes(StandardCharsets.UTF_8)).statusCode());
+        assertEquals(0, count("imported_expenses"));
+        assertEquals(0, count("import_batches"));
+    }
+
+    @Test
+    void notificationPaginationSettingsAndReadAllAreSafe() throws Exception {
+        Account a = register("notif-edge");
+        Account administrator = admin();
+        grant(administrator, a, 400_000);
+        for (String query : List.of("size=0", "size=101", "page=-1")) {
+            assertError(400, "INVALID_REQUEST", request("GET", "/notifications?" + query, a.token(), null));
+        }
+        assertEquals(200, request("GET", "/notifications?size=100", a.token(), null).statusCode());
+        assertEquals(204, request("POST", "/notifications/read-all", a.token(), null).statusCode());
+        assertEquals(204, request("POST", "/notifications/read-all", a.token(), null).statusCode()); // idempotent
+        assertError(404, "NOTIFICATION_NOT_FOUND", request("POST", "/notifications/" + UUID.randomUUID() + "/read",
+                a.token(), null));
+
+        String checking = wallet(a).path("walletId").asString();
+        String settings = "/me/accounts/" + checking + "/notification-settings";
+        assertEquals(200, request("PUT", settings, a.token(), "{\"lowBalanceDong\":0}").statusCode());
+        assertEquals(0, body(request("GET", settings, a.token(), null)).path("lowBalanceDong").longValue());
+        assertEquals(0, notifications(a, "LOW_BALANCE"));
+        UUID savingsId = UUID.fromString(body(openSavings(a, 100_000)).path("accountId").asString());
+        assertError(400, "NOTIFICATION_NOT_SUPPORTED", request("PUT", "/me/accounts/" + savingsId
+                + "/notification-settings", a.token(), "{\"lowBalanceDong\":10}"));
+        assertEquals(401, request("GET", settings, null, null).statusCode());
+    }
+
+    private String uniqueEmail(String label) { return label + "-" + UUID.randomUUID() + "@example.test"; }
+
+    private HttpResponse<String> registerRaw(String email, String displayName, String password) throws Exception {
+        return request("POST", "/auth/register", null, "{\"email\":\"" + email + "\",\"displayName\":\""
+                + displayName + "\",\"password\":\"" + password + "\"}");
+    }
+
+    private HttpResponse<String> openSavings(Account owner, long amount) throws Exception {
+        return request("POST", "/me/accounts", owner.token(),
+                "{\"requestKey\":\"" + UUID.randomUUID() + "\",\"type\":\"SAVINGS\",\"fundingAccountId\":\""
+                        + wallet(owner).path("walletId").asString() + "\",\"amountDong\":" + amount + "}");
+    }
+
+    private HttpResponse<String> closeAccount(Account owner, UUID accountId, UUID key) throws Exception {
+        return request("POST", "/me/accounts/" + accountId + "/close", owner.token(),
+                "{\"requestKey\":\"" + key + "\"}");
+    }
+
     private int notifications(Account account, String type) {
         return db.queryForObject("SELECT count(*) FROM notifications WHERE user_id=? AND type=?",
                 Integer.class, account.userId(), type);
