@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: internal_wallet
       POSTGRES_USER: wallet_app
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
