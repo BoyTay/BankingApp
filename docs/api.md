@@ -139,7 +139,7 @@ Với tập giao dịch lớn, truyền **cả hai** tham số `page` (bắt đ�
 
 ### `POST /expense-imports/preview?format=SAMPLE_A|SAMPLE_B`
 
-Giao diện web chỉ cung cấp [một tệp mẫu tiếng Việt](../samples/chi-tieu-mau.csv) và gửi `format=SAMPLE_B`. Mẫu mới dùng dấu phẩy, header `Ngày,Nội dung,Danh mục,Số tiền`, ngày `yyyy-MM-dd` và số tiền nguyên VND. `SAMPLE_A` cùng mẫu B dấu chấm phẩy cũ vẫn được API chấp nhận để tương thích với tệp đã có.
+Giao diện web chỉ cung cấp [một tệp mẫu tiếng Việt](../samples/chi-tieu-mau.csv) và gửi `format=SAMPLE_B`. Mẫu mới dùng dấu phẩy, header `Ngày,Nội dung,Danh mục,Số tiền`, ngày chỉ `MM/dd/yyyy` hoặc `MM-dd-yyyy` và số tiền nguyên VND. `SAMPLE_A` cùng mẫu B dấu chấm phẩy cũ vẫn được API chấp nhận để tương thích với tệp đã có.
 
 Gửi `multipart/form-data` với phần `file` (CSV UTF-8, tối đa 1 MiB). Cần Bearer token; endpoint chỉ phân tích bằng Adapter tương ứng và **không ghi database**. Response `200` trả toàn bộ dòng hợp lệ và lỗi theo dòng để người dùng sửa tệp trước khi xác nhận:
 
