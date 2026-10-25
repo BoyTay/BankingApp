@@ -24,14 +24,14 @@ Mục **Chi tiêu** dùng để ghi các khoản chi từ một tệp CSV, chẳ
 
 ### Chuẩn bị tệp
 
-Tải [tệp mẫu chi tiêu CSV](../samples/chi-tieu-mau.csv) ngay trên trang, thay các dòng ví dụ bằng khoản chi của mình và giữ nguyên dòng tiêu đề. Giao diện web dùng một định dạng: CSV UTF-8 có dấu nhận diện để Excel hiển thị tiếng Việt, phân cách bằng dấu phẩy; ngày theo `yyyy-MM-dd`, số tiền nguyên VND không có dấu phân nhóm.
+Tải [tệp mẫu chi tiêu CSV](../samples/chi-tieu-mau.csv) ngay trên trang, thay các dòng ví dụ bằng khoản chi của mình và giữ nguyên dòng tiêu đề. Giao diện web dùng một định dạng: CSV UTF-8 có dấu nhận diện để Excel hiển thị tiếng Việt, phân cách bằng dấu phẩy; ngày chỉ theo `MM/dd/yyyy` hoặc `MM-dd-yyyy` (ví dụ `10/25/2026` hoặc `10-25-2026`), số tiền nguyên VND không có dấu phân nhóm.
 
 Ví dụ:
 
 ```csv
 Ngày,Nội dung,Danh mục,Số tiền
-2026-10-05,Bữa trưa,Ăn uống,45000
-2026-10-08,Xe buýt,Đi lại,12000
+10-05-2026,Bữa trưa,Ăn uống,45000
+10-08-2026,Xe buýt,Đi lại,12000
 ```
 
 Tệp tối đa 1 MiB và 5.000 dòng dữ liệu. Cả bốn cột đều cần có giá trị hợp lệ; số tiền phải dương.

@@ -113,6 +113,14 @@ final class ExpenseCsvParsing {
         return value -> LocalDate.parse(value, format);
     }
 
+    /** Mẫu mới chỉ nhận MM/dd/yyyy hoặc MM-dd-yyyy (Excel vùng US), không nhận định dạng khác. */
+    static Function<String, LocalDate> dateMonthFirst() {
+        var strict = java.time.format.ResolverStyle.STRICT;
+        DateTimeFormatter slash = DateTimeFormatter.ofPattern("M/d/uuuu").withResolverStyle(strict);
+        DateTimeFormatter dash = DateTimeFormatter.ofPattern("M-d-uuuu").withResolverStyle(strict);
+        return value -> LocalDate.parse(value, value.contains("-") ? dash : slash);
+    }
+
     private static CsvPreview fileError(Integer line, String message) {
         return new CsvPreview(0, List.of(), List.of(new CsvPreview.RowError(line, "INVALID_CSV", message)));
     }

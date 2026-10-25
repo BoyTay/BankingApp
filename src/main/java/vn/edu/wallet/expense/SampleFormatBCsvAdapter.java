@@ -1,7 +1,6 @@
 package vn.edu.wallet.expense;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +16,6 @@ public final class SampleFormatBCsvAdapter implements ExpenseCsvAdapter {
         }
         return ExpenseCsvParsing.preview(utf8Csv, ',',
                 List.of("Ngày", "Nội dung", "Danh mục", "Số tiền"),
-                LocalDate::parse, ExpenseCsvParsing::amountA);
+                ExpenseCsvParsing.dateMonthFirst(), ExpenseCsvParsing::amountA);
     }
 }
