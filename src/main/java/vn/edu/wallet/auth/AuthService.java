@@ -49,7 +49,7 @@ public class AuthService {
         String code = WalletCodes.fromId(walletId);
         try {
             db.update("INSERT INTO app_users(id,email,display_name,password_hash,role) VALUES (?,?,?,?, 'USER')",
-                    userId, email, name, passwords.encode(input.password()));
+                    userId, email, name, encodePassword(input.password()));
             db.update("INSERT INTO wallets(id,owner_id,wallet_code,balance_dong) VALUES (?,?,?,0)",
                     walletId, userId, code);
         } catch (DuplicateKeyException ex) {
@@ -66,7 +66,7 @@ public class AuthService {
         List<UserRow> users = db.query("SELECT id,email,display_name,password_hash,role FROM app_users WHERE email=?",
                 (rs, row) -> new UserRow(rs.getObject("id", UUID.class), rs.getString("email"),
                         rs.getString("display_name"), rs.getString("password_hash"), rs.getString("role")), email);
-        if (users.isEmpty() || !passwords.matches(input.password(), users.getFirst().hash())) {
+        if (users.isEmpty() || !passwords.matches(bcryptInput(input.password()), users.getFirst().hash())) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Email hoặc mật khẩu không đúng");
         }
         UserRow user = users.getFirst();
@@ -110,9 +110,22 @@ public class AuthService {
         UUID userId = UUID.randomUUID();
         UUID walletId = UUID.randomUUID();
         db.update("INSERT INTO app_users(id,email,display_name,password_hash,role) VALUES (?,?,?,?, 'ADMIN')",
-                userId, normalized, "Demo Admin", passwords.encode(password));
+                userId, normalized, "Demo Admin", encodePassword(password));
         db.update("INSERT INTO wallets(id,owner_id,wallet_code,balance_dong) VALUES (?,?,?,0)",
                 walletId, userId, WalletCodes.fromId(walletId));
+    }
+
+    private String encodePassword(String password) { return passwords.encode(bcryptInput(password)); }
+
+    /** BCrypt từ chối mật khẩu quá 72 byte; mật khẩu dài hơn được băm SHA-256 trước, mật khẩu ngắn giữ nguyên để hash cũ còn dùng được. */
+    private static String bcryptInput(String password) {
+        byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= 72) return password;
+        try {
+            return Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+        }
     }
 
     private static String tokenHash(String token) {
